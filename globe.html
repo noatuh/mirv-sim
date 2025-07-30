@@ -48,6 +48,19 @@
             border-radius: 8px;
             font-size: 14px;
         }
+        .row input[type="range"] {
+            background: #141428;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            padding: 4px;
+            outline: none;
+        }
+        .row span {
+            min-width: 30px;
+            font-size: 12px;
+            color: #ffd700;
+            font-weight: 600;
+        }
         .small { font-size: 12px; color: #9bb0ff; margin-top: 6px; line-height: 1.3; }
         .divider { height: 1px; background: linear-gradient(to right, transparent, rgba(255,255,255,0.18), transparent); margin: 12px 0; }
         .counter { margin-top: 8px; font-weight: 600; color: #ffd700; }
@@ -153,6 +166,12 @@
             </div>
 
             <div class="row">
+                <label for="timescale">Time Scale</label>
+                <input type="range" id="timescale" min="0.1" max="5" step="0.1" value="1">
+                <span id="timescaleValue">1x</span>
+            </div>
+
+            <div class="row">
                 <label for="typeSelect">Detonation</label>
                 <select id="typeSelect">
                     <option value="air">Air burst</option>
@@ -164,11 +183,11 @@
 
             <div class="small">
                 <strong>Launch Location:</strong> <span id="launchLocation">Not set</span><br/>
-                <strong>Targets:</strong> <span id="targetCount">0</span>
+                <strong>Target Area:</strong> <span id="targetArea">Not set</span>
             </div>
 
-            <div class="target-list" id="targetList" style="display:none;">
-                <!-- Target items will be added here dynamically -->
+            <div class="small" id="statusText" style="display:none;">
+                <!-- Dynamic status updates will appear here -->
             </div>
 
             <div class="divider"></div>
@@ -185,7 +204,7 @@
             <div class="divider"></div>
 
             <div class="small">
-                <strong>Click</strong> to set launch/target locations.<br/>
+                <strong>Shift+Click</strong> to set launch location, then target area.<br/>
                 Drag to rotate. Scroll to zoom.
             </div>
 
@@ -199,7 +218,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script>
-/* MIRV Simulator - Multiple Independent Reentry Vehicle Simulation */
+/* MIRV Simulator - Realistic Multiple Independent Reentry Vehicle Simulation */
 class MIRVSimulator {
     constructor() {
         this.scene = null;
@@ -212,10 +231,17 @@ class MIRVSimulator {
         // MIRV-specific properties
         this.mode = 'launch'; // 'launch', 'target', 'ready'
         this.launchLocation = null;
-        this.targets = [];
+        this.targetArea = null;
         this.explosions = [];
-        this.trajectories = [];
         this.animatingMIRV = false;
+        this.timescale = 1.0;
+        this.shiftPressed = false;
+        
+        // Mission objects
+        this.rocket = null;
+        this.warheads = [];
+        this.trajectoryLines = [];
+        this.rocketTrail = null;
         
         this.earthRadius = 1;
         this.animationId = null;
@@ -267,6 +293,16 @@ class MIRVSimulator {
 
         // Events
         window.addEventListener('resize', () => this.onResize());
+        window.addEventListener('keydown', (event) => {
+            if (event.key === 'Shift') {
+                this.shiftPressed = true;
+            }
+        });
+        window.addEventListener('keyup', (event) => {
+            if (event.key === 'Shift') {
+                this.shiftPressed = false;
+            }
+        });
         this.renderer.domElement.addEventListener('click', (event) => {
             this.onGlobeClick(event);
         });
@@ -338,12 +374,19 @@ class MIRVSimulator {
         this.warheadCountSelect = document.getElementById('warheadCount');
         this.yieldSelect = document.getElementById('yieldSelect');
         this.typeSelect = document.getElementById('typeSelect');
+        this.timescaleSlider = document.getElementById('timescale');
+        this.timescaleValue = document.getElementById('timescaleValue');
         this.modeIndicator = document.getElementById('modeIndicator');
         this.launchLocationSpan = document.getElementById('launchLocation');
-        this.targetCountSpan = document.getElementById('targetCount');
-        this.targetList = document.getElementById('targetList');
+        this.targetAreaSpan = document.getElementById('targetArea');
+        this.statusText = document.getElementById('statusText');
         this.launchBtn = document.getElementById('launchBtn');
         this.clearBtn = document.getElementById('clearBtn');
+
+        this.timescaleSlider.addEventListener('input', (e) => {
+            this.timescale = parseFloat(e.target.value);
+            this.timescaleValue.textContent = this.timescale + 'x';
+        });
 
         this.launchBtn.addEventListener('click', () => this.launchMIRV());
         this.clearBtn.addEventListener('click', () => this.clearAll());
@@ -373,7 +416,7 @@ class MIRVSimulator {
     }
 
     onGlobeClick(event) {
-        if (this.animatingMIRV) return;
+        if (this.animatingMIRV || !this.shiftPressed) return;
         
         this.getPointerNDC(event);
         this.raycaster.setFromCamera(this.mouse, this.camera);
@@ -385,7 +428,7 @@ class MIRVSimulator {
             if (this.mode === 'launch') {
                 this.setLaunchLocation(point);
             } else if (this.mode === 'target') {
-                this.addTarget(point);
+                this.setTargetArea(point);
             }
         }
     }
@@ -396,189 +439,481 @@ class MIRVSimulator {
             this.scene.remove(this.launchLocation.marker);
         }
 
-        // Create launch marker
-        const marker = new THREE.Mesh(
-            new THREE.SphereGeometry(0.012, 12, 12),
-            new THREE.MeshBasicMaterial({ 
-                color: 0x00ff00,
-                emissive: 0x004400,
-                transparent: true,
-                opacity: 0.9
-            })
-        );
-        marker.position.copy(point.clone().normalize().multiplyScalar(this.earthRadius * 1.004));
-        this.scene.add(marker);
-
-        this.launchLocation = { point: point.clone(), marker };
+        // Create launch marker (launch pad)
+        const launchPadGroup = new THREE.Group();
+        
+        // Base platform
+        const baseGeometry = new THREE.CylinderGeometry(0.015, 0.015, 0.003, 16);
+        const baseMaterial = new THREE.MeshBasicMaterial({ color: 0x444444 });
+        const base = new THREE.Mesh(baseGeometry, baseMaterial);
+        base.position.y = 0.0015;
+        launchPadGroup.add(base);
+        
+        // Launch tower
+        const towerGeometry = new THREE.BoxGeometry(0.002, 0.025, 0.002);
+        const towerMaterial = new THREE.MeshBasicMaterial({ color: 0x666666 });
+        const tower = new THREE.Mesh(towerGeometry, towerMaterial);
+        tower.position.y = 0.0125;
+        launchPadGroup.add(tower);
+        
+        // Positioning
+        launchPadGroup.position.copy(point.clone().normalize().multiplyScalar(this.earthRadius * 1.004));
+        launchPadGroup.lookAt(point.clone().normalize().multiplyScalar(this.earthRadius * 2));
+        
+        this.scene.add(launchPadGroup);
+        this.launchLocation = { point: point.clone(), marker: launchPadGroup };
         this.mode = 'target';
         this.updateUI();
     }
 
-    addTarget(point) {
-        const warheadCount = parseInt(this.warheadCountSelect.value);
-        if (this.targets.length >= warheadCount) {
-            return; // Don't exceed warhead count
+    setTargetArea(point) {
+        // Remove existing target marker
+        if (this.targetArea && this.targetArea.marker) {
+            this.scene.remove(this.targetArea.marker);
         }
 
-        // Create target marker
-        const marker = new THREE.Mesh(
-            new THREE.SphereGeometry(0.008, 10, 10),
-            new THREE.MeshBasicMaterial({ 
-                color: 0xff0000,
-                emissive: 0x440000,
-                transparent: true,
-                opacity: 0.9
-            })
-        );
-        marker.position.copy(point.clone().normalize().multiplyScalar(this.earthRadius * 1.002));
-        this.scene.add(marker);
-
-        const target = { 
-            point: point.clone(), 
-            marker,
-            id: this.targets.length
-        };
-        this.targets.push(target);
-
-        if (this.targets.length === warheadCount) {
-            this.mode = 'ready';
-        }
-
+        // Create target area marker (larger circular area)
+        const targetGroup = new THREE.Group();
+        
+        // Target circle
+        const circleGeometry = new THREE.RingGeometry(0.02, 0.025, 32);
+        const circleMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff0000,
+            transparent: true,
+            opacity: 0.7,
+            side: THREE.DoubleSide
+        });
+        const circle = new THREE.Mesh(circleGeometry, circleMaterial);
+        circle.rotateX(-Math.PI / 2);
+        targetGroup.add(circle);
+        
+        // Center marker
+        const centerGeometry = new THREE.SphereGeometry(0.005, 8, 8);
+        const centerMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff0000,
+            emissive: 0x440000
+        });
+        const center = new THREE.Mesh(centerGeometry, centerMaterial);
+        center.position.y = 0.002;
+        targetGroup.add(center);
+        
+        // Positioning
+        targetGroup.position.copy(point.clone().normalize().multiplyScalar(this.earthRadius * 1.002));
+        targetGroup.lookAt(point.clone().normalize().multiplyScalar(this.earthRadius * 2));
+        
+        this.scene.add(targetGroup);
+        this.targetArea = { point: point.clone(), marker: targetGroup };
+        this.mode = 'ready';
         this.updateUI();
     }
 
-    removeTarget(targetId) {
-        const target = this.targets[targetId];
-        if (target) {
-            this.scene.remove(target.marker);
-            this.targets.splice(targetId, 1);
-            
-            // Update IDs
-            this.targets.forEach((t, i) => t.id = i);
-            
-            if (this.targets.length < parseInt(this.warheadCountSelect.value)) {
-                this.mode = 'target';
-            }
-            this.updateUI();
-        }
-    }
-
     updateUI() {
-        const warheadCount = parseInt(this.warheadCountSelect.value);
-        
         // Update mode indicator
         if (this.mode === 'launch') {
             this.modeIndicator.textContent = 'Mode: Set Launch Location';
+            this.statusText.style.display = 'none';
         } else if (this.mode === 'target') {
-            this.modeIndicator.textContent = `Mode: Set Targets (${this.targets.length}/${warheadCount})`;
+            this.modeIndicator.textContent = 'Mode: Set Target Area';
+            this.statusText.style.display = 'none';
         } else if (this.mode === 'ready') {
             this.modeIndicator.textContent = 'Mode: Ready to Launch';
+            this.statusText.style.display = 'none';
         }
 
-        // Update launch location
+        // Update location displays
         this.launchLocationSpan.textContent = this.launchLocation ? 'Set' : 'Not set';
-
-        // Update target count
-        this.targetCountSpan.textContent = `${this.targets.length}/${warheadCount}`;
-
-        // Update target list
-        if (this.targets.length > 0) {
-            this.targetList.style.display = 'block';
-            this.targetList.innerHTML = this.targets.map(target => `
-                <div class="target-item">
-                    <span>Target ${target.id + 1}</span>
-                    <button class="target-remove" onclick="simulator.removeTarget(${target.id})">Remove</button>
-                </div>
-            `).join('');
-        } else {
-            this.targetList.style.display = 'none';
-        }
+        this.targetAreaSpan.textContent = this.targetArea ? 'Set' : 'Not set';
 
         // Update launch button
         this.launchBtn.disabled = this.mode !== 'ready' || this.animatingMIRV;
     }
 
+    updateStatus(message) {
+        this.statusText.textContent = message;
+        this.statusText.style.display = 'block';
+    }
+
     launchMIRV() {
-        if (!this.launchLocation || this.targets.length === 0 || this.animatingMIRV) return;
+        if (!this.launchLocation || !this.targetArea || this.animatingMIRV) return;
 
         this.animatingMIRV = true;
         this.updateUI();
+        this.updateStatus('🚀 Rocket launching...');
 
-        // Create trajectories for each warhead
-        this.targets.forEach((target, index) => {
-            setTimeout(() => {
-                this.createTrajectory(this.launchLocation.point, target.point, index);
-            }, index * 200); // Stagger warhead releases
-        });
+        // Phase 1: Create and launch the rocket
+        this.createRocket();
+        this.startRocketLaunch();
     }
 
-    createTrajectory(launchPoint, targetPoint, warheadIndex) {
-        // Calculate trajectory arc
+    createRocket() {
+        const rocketGroup = new THREE.Group();
+        
+        // Main body
+        const bodyGeometry = new THREE.CylinderGeometry(0.003, 0.004, 0.020, 8);
+        const bodyMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc });
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.position.y = 0.010;
+        rocketGroup.add(body);
+        
+        // Nose cone
+        const noseGeometry = new THREE.ConeGeometry(0.003, 0.008, 8);
+        const noseMaterial = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+        const nose = new THREE.Mesh(noseGeometry, noseMaterial);
+        nose.position.y = 0.024;
+        rocketGroup.add(nose);
+        
+        // Exhaust flame (initially invisible)
+        const flameGeometry = new THREE.ConeGeometry(0.006, 0.015, 8);
+        const flameMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff6600,
+            transparent: true,
+            opacity: 0.8
+        });
+        const flame = new THREE.Mesh(flameGeometry, flameMaterial);
+        flame.position.y = -0.0075;
+        flame.visible = false;
+        rocketGroup.add(flame);
+        
+        // Position at launch pad
+        rocketGroup.position.copy(this.launchLocation.point.clone().normalize().multiplyScalar(this.earthRadius * 1.006));
+        rocketGroup.lookAt(this.launchLocation.point.clone().normalize().multiplyScalar(this.earthRadius * 2));
+        
+        this.scene.add(rocketGroup);
+        this.rocket = { group: rocketGroup, flame: flame };
+    }
+
+    startRocketLaunch() {
+        const launchPoint = this.launchLocation.point.clone();
+        const targetPoint = this.targetArea.point.clone();
+        
+        // Calculate trajectory - high arc for intercontinental ballistic missile
         const distance = launchPoint.distanceTo(targetPoint);
         const midPoint = launchPoint.clone().add(targetPoint).multiplyScalar(0.5);
-        const height = Math.max(0.3, distance * 0.5); // Arc height based on distance
+        const apogeeHeight = Math.max(0.4, distance * 0.8); // Very high trajectory
+        const apogeePoint = midPoint.clone().normalize().multiplyScalar(this.earthRadius + apogeeHeight);
         
-        // Create control point for arc
-        const controlPoint = midPoint.clone().normalize().multiplyScalar(this.earthRadius + height);
+        // Create trajectory curve (quadratic Bezier)
+        const trajectory = new THREE.QuadraticBezierCurve3(launchPoint, apogeePoint, targetPoint);
         
-        // Create trajectory curve
-        const curve = new THREE.QuadraticBezierCurve3(launchPoint, controlPoint, targetPoint);
-        const points = curve.getPoints(50);
+        // Create rocket trail
+        this.rocketTrail = {
+            points: [],
+            line: null
+        };
         
-        // Create trajectory line
-        const trajectoryGeometry = new THREE.BufferGeometry().setFromPoints(points);
-        const trajectoryMaterial = new THREE.LineBasicMaterial({ 
+        // Show exhaust flame
+        this.rocket.flame.visible = true;
+        
+        // Phase 1: Rocket ascent (0-60% of trajectory - goes much further before separation)
+        const ascentDuration = 20000 / this.timescale; // 20 seconds real time
+        const startTime = Date.now();
+        
+        const animateAscent = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / ascentDuration, 1);
+            const trajectoryProgress = progress * 0.6; // Goes to 60% of trajectory before separation
+            
+            if (progress < 1) {
+                const position = trajectory.getPoint(trajectoryProgress);
+                this.rocket.group.position.copy(position);
+                
+                // Add point to trail
+                this.rocketTrail.points.push(position.clone());
+                
+                // Update trail visualization
+                this.updateRocketTrail();
+                
+                // Orient rocket along trajectory
+                const nextPos = trajectory.getPoint(Math.min(trajectoryProgress + 0.01, 1));
+                this.rocket.group.lookAt(nextPos);
+                
+                requestAnimationFrame(animateAscent);
+            } else {
+                // Phase 2: MIRV separation - rocket breaks apart
+                this.updateStatus('💥 MIRV separation occurring...');
+                setTimeout(() => this.mirvSeparation(trajectory, 0.6), 500 / this.timescale);
+            }
+        };
+        
+        animateAscent();
+    }
+
+    updateRocketTrail() {
+        // Remove old trail line
+        if (this.rocketTrail.line) {
+            this.scene.remove(this.rocketTrail.line);
+        }
+        
+        // Create new trail line
+        if (this.rocketTrail.points.length > 1) {
+            const trailGeometry = new THREE.BufferGeometry().setFromPoints(this.rocketTrail.points);
+            const trailMaterial = new THREE.LineBasicMaterial({ 
+                color: 0xffdd44,
+                transparent: true,
+                opacity: 0.8,
+                linewidth: 2
+            });
+            this.rocketTrail.line = new THREE.Line(trailGeometry, trailMaterial);
+            this.scene.add(this.rocketTrail.line);
+        }
+    }
+
+    mirvSeparation(mainTrajectory, separationProgress) {
+        // Get the actual separation point from the rocket's current position
+        const rocketPosition = this.rocket.group.position.clone();
+        
+        // Create breakup debris from rocket
+        this.createRocketBreakup(rocketPosition);
+        
+        // Remove rocket after brief delay to show breakup
+        setTimeout(() => {
+            this.scene.remove(this.rocket.group);
+            this.rocket = null;
+        }, 1000 / this.timescale);
+        
+        // Generate warhead targets around the target area
+        const warheadCount = parseInt(this.warheadCountSelect.value);
+        const targetCenter = this.targetArea.point.clone();
+        const warheadTargets = this.generateWarheadTargets(targetCenter, warheadCount);
+        
+        // Create individual warheads starting from the actual separation point (rocket position)
+        this.warheads = [];
+        
+        warheadTargets.forEach((target, index) => {
+            setTimeout(() => {
+                this.createWarhead(rocketPosition, target, index);
+            }, index * (150 / this.timescale)); // Stagger warhead deployment
+        });
+        
+        this.updateStatus(`🎯 ${warheadCount} warheads deploying...`);
+    }
+
+    createRocketBreakup(position) {
+        // Create several debris pieces
+        for (let i = 0; i < 5; i++) {
+            const debrisGeometry = new THREE.BoxGeometry(0.001, 0.003, 0.001);
+            const debrisMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0x666666,
+                transparent: true,
+                opacity: 0.8
+            });
+            const debris = new THREE.Mesh(debrisGeometry, debrisMaterial);
+            
+            // Random position around breakup point
+            const offset = new THREE.Vector3(
+                (Math.random() - 0.5) * 0.01,
+                (Math.random() - 0.5) * 0.01,
+                (Math.random() - 0.5) * 0.01
+            );
+            debris.position.copy(position.clone().add(offset));
+            
+            // Random rotation
+            debris.rotation.set(
+                Math.random() * Math.PI,
+                Math.random() * Math.PI,
+                Math.random() * Math.PI
+            );
+            
+            this.scene.add(debris);
+            
+            // Animate debris falling
+            const fallDuration = 5000 / this.timescale;
+            const startTime = Date.now();
+            const initialPos = debris.position.clone();
+            const fallDirection = position.clone().normalize().multiplyScalar(-0.05);
+            
+            const animateDebris = () => {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / fallDuration, 1);
+                
+                if (progress < 1) {
+                    const fallOffset = fallDirection.clone().multiplyScalar(progress);
+                    debris.position.copy(initialPos.clone().add(fallOffset));
+                    debris.rotation.x += 0.1;
+                    debris.rotation.y += 0.05;
+                    debris.rotation.z += 0.08;
+                    requestAnimationFrame(animateDebris);
+                } else {
+                    this.scene.remove(debris);
+                }
+            };
+            
+            setTimeout(animateDebris, i * (200 / this.timescale));
+        }
+    }
+
+    generateWarheadTargets(centerPoint, count) {
+        const targets = [];
+        const spreadRadius = 0.03; // Target spread radius
+        
+        for (let i = 0; i < count; i++) {
+            const angle = (i / count) * Math.PI * 2;
+            const radius = Math.random() * spreadRadius;
+            
+            // Calculate offset on sphere surface
+            const offset = new THREE.Vector3(
+                Math.cos(angle) * radius,
+                0,
+                Math.sin(angle) * radius
+            );
+            
+            const target = centerPoint.clone().add(offset).normalize().multiplyScalar(this.earthRadius);
+            targets.push(target);
+        }
+        
+        return targets;
+    }
+
+    createWarhead(startPoint, targetPoint, index) {
+        // Create warhead object
+        const warheadGeometry = new THREE.SphereGeometry(0.002, 6, 6);
+        const warheadMaterial = new THREE.MeshBasicMaterial({ 
             color: 0xffaa00,
+            emissive: 0xff4400
+        });
+        const warhead = new THREE.Mesh(warheadGeometry, warheadMaterial);
+        warhead.position.copy(startPoint);
+        this.scene.add(warhead);
+        
+        // Create warhead trajectory (follows original rocket trajectory then disperses)
+        const trajectoryPoints = this.calculateWarheadTrajectory(startPoint, targetPoint);
+        const trajectory = new THREE.CatmullRomCurve3(trajectoryPoints);
+        
+        // Create continuous trajectory line that connects to rocket trail
+        const fullTrajectoryPoints = [];
+        
+        // Add rocket trail points first (if they exist)
+        if (this.rocketTrail && this.rocketTrail.points.length > 0) {
+            fullTrajectoryPoints.push(...this.rocketTrail.points);
+        }
+        
+        // Add warhead trajectory points
+        const warheadPoints = trajectory.getPoints(30);
+        fullTrajectoryPoints.push(...warheadPoints);
+        
+        // Create the full trajectory line
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints(fullTrajectoryPoints);
+        const lineMaterial = new THREE.LineBasicMaterial({ 
+            color: index === 0 ? 0xffdd44 : 0xff8800, // First warhead keeps rocket trail color, others are orange
             transparent: true,
             opacity: 0.7
         });
-        const trajectoryLine = new THREE.Line(trajectoryGeometry, trajectoryMaterial);
+        const trajectoryLine = new THREE.Line(lineGeometry, lineMaterial);
         this.scene.add(trajectoryLine);
-
-        // Create warhead object
-        const warheadGeometry = new THREE.SphereGeometry(0.004, 8, 8);
-        const warheadMaterial = new THREE.MeshBasicMaterial({ 
-            color: 0xffffff,
-            emissive: 0xffaa00
-        });
-        const warhead = new THREE.Mesh(warheadGeometry, warheadMaterial);
-        this.scene.add(warhead);
-
-        // Animate warhead along trajectory
-        let progress = 0;
-        const duration = 3000 + (warheadIndex * 100); // Slightly different times
+        
+        // If this is the first warhead, hide the original rocket trail since we're replacing it
+        if (index === 0 && this.rocketTrail && this.rocketTrail.line) {
+            this.scene.remove(this.rocketTrail.line);
+            this.rocketTrail.line = null;
+        }
+        
+        // Animate warhead descent
+        const descentDuration = 8000 / this.timescale; // 8 seconds
         const startTime = Date.now();
-
-        const animateWarhead = () => {
+        
+        const animateDescent = () => {
             const elapsed = Date.now() - startTime;
-            progress = Math.min(elapsed / duration, 1);
-
+            const progress = Math.min(elapsed / descentDuration, 1);
+            
             if (progress < 1) {
-                const position = curve.getPoint(progress);
+                const position = trajectory.getPoint(progress);
                 warhead.position.copy(position);
-                requestAnimationFrame(animateWarhead);
+                requestAnimationFrame(animateDescent);
             } else {
                 // Impact!
                 this.scene.remove(warhead);
-                this.scene.remove(trajectoryLine);
+                // Note: Keep trajectory line visible until clearAll() is called
                 this.addExplosion(targetPoint);
                 
                 // Check if all warheads have impacted
-                this.checkMIRVComplete();
+                if (this.explosions.length >= parseInt(this.warheadCountSelect.value)) {
+                    setTimeout(() => {
+                        this.updateStatus('✅ Mission complete');
+                        this.animatingMIRV = false;
+                        this.updateUI();
+                    }, 2000 / this.timescale);
+                }
             }
         };
-
-        animateWarhead();
+        
+        animateDescent();
+        this.warheads.push({ mesh: warhead, trajectory: trajectoryLine });
     }
 
-    checkMIRVComplete() {
-        // Simple check - if we have explosions equal to target count, MIRV is complete
-        if (this.explosions.length >= this.targets.length) {
-            setTimeout(() => {
-                this.animatingMIRV = false;
-                this.updateUI();
-            }, 1000);
+    calculateWarheadTrajectory(start, target) {
+        // Get the original rocket trajectory (launch to target area center)
+        const launchPoint = this.launchLocation.point.clone();
+        const originalTarget = this.targetArea.point.clone();
+        
+        // Calculate original trajectory parameters (same as rocket)
+        const distance = launchPoint.distanceTo(originalTarget);
+        const midPoint = launchPoint.clone().add(originalTarget).multiplyScalar(0.5);
+        const apogeeHeight = Math.max(0.4, distance * 0.8);
+        const apogeePoint = midPoint.clone().normalize().multiplyScalar(this.earthRadius + apogeeHeight);
+        
+        // Create the original trajectory curve (same parabola as rocket)
+        const originalTrajectory = new THREE.QuadraticBezierCurve3(launchPoint, apogeePoint, originalTarget);
+        
+        // Find where we are on the original trajectory (separation point)
+        const separationProgress = 0.6; // We separate at 60% of the trajectory
+        
+        // Follow the main trajectory very closely, with minimal dispersal only at the very end
+        const points = [];
+        const steps = 15;
+        
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            
+            // Continue along the original trajectory from separation point to target
+            const originalProgress = separationProgress + (1 - separationProgress) * t;
+            const originalPoint = originalTrajectory.getPoint(originalProgress);
+            
+            // Only add very slight dispersal in the final 20% of the trajectory
+            if (t > 0.8) {
+                const dispersalFactor = (t - 0.8) / 0.2; // 0 to 1 in final 20%
+                const dispersalAmount = dispersalFactor * dispersalFactor; // Quadratic easing
+                
+                // Calculate small offset toward individual target (much smaller than before)
+                const targetDirection = target.clone().sub(originalTarget).normalize();
+                const maxDispersalDistance = 0.008; // Very small dispersal - just enough to reach individual targets
+                const dispersalOffset = targetDirection.clone().multiplyScalar(maxDispersalDistance * dispersalAmount);
+                
+                const point = originalPoint.clone().add(dispersalOffset);
+                points.push(point);
+            } else {
+                // Follow the main trajectory exactly
+                points.push(originalPoint);
+            }
         }
+        
+        return points;
+    }
+
+    calculateBallisticTrajectory(start, target) {
+        const points = [];
+        const steps = 8;
+        
+        // Calculate the distance and height difference
+        const startHeight = start.length() - this.earthRadius;
+        const targetHeight = 0; // Target is on surface
+        
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            
+            // Linear interpolation between start and target positions
+            const point = start.clone().lerp(target, t);
+            
+            // Add ballistic arc - starts high, comes down in a realistic curve
+            // Use a parabolic descent rather than a sine wave
+            const heightProgress = 1 - t; // Goes from 1 to 0
+            const additionalHeight = startHeight * heightProgress * heightProgress; // Parabolic descent
+            
+            // Normalize to sphere surface and add height
+            point.normalize().multiplyScalar(this.earthRadius + additionalHeight);
+            points.push(point);
+        }
+        
+        return points;
     }
 
     calculateBlastRadii(yieldMt, detonationType) {
@@ -662,17 +997,36 @@ class MIRVSimulator {
         }
         this.explosions = [];
 
+        // Clear rocket
+        if (this.rocket) {
+            this.scene.remove(this.rocket.group);
+            this.rocket = null;
+        }
+
+        // Clear rocket trail (only if it hasn't been replaced by warhead trajectories)
+        if (this.rocketTrail && this.rocketTrail.line) {
+            this.scene.remove(this.rocketTrail.line);
+        }
+        this.rocketTrail = null;
+
+        // Clear warheads and their continuous trajectories
+        for (const warhead of this.warheads) {
+            this.scene.remove(warhead.mesh);
+            this.scene.remove(warhead.trajectory);
+        }
+        this.warheads = [];
+
         // Clear launch location
         if (this.launchLocation && this.launchLocation.marker) {
             this.scene.remove(this.launchLocation.marker);
         }
         this.launchLocation = null;
 
-        // Clear targets
-        for (const target of this.targets) {
-            this.scene.remove(target.marker);
+        // Clear target area
+        if (this.targetArea && this.targetArea.marker) {
+            this.scene.remove(this.targetArea.marker);
         }
-        this.targets = [];
+        this.targetArea = null;
 
         // Reset mode
         this.mode = 'launch';
