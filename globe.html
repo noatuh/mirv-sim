@@ -210,6 +210,7 @@
 
             <div class="buttons">
                 <button id="launchBtn" type="button" disabled>🚀 Launch MIRV</button>
+                <button id="stagingBtn" type="button" disabled>🎯 Stage Another</button>
                 <button id="clearBtn" type="button">Clear All</button>
             </div>
         </div>
@@ -237,11 +238,13 @@ class MIRVSimulator {
         this.timescale = 1.0;
         this.shiftPressed = false;
         
-        // Mission objects
+        // Mission objects - support multiple launches
         this.rocket = null;
         this.warheads = [];
         this.trajectoryLines = [];
         this.rocketTrail = null;
+        this.launches = []; // Track all launches
+        this.missionCount = 0; // Counter for mission numbering
         
         this.earthRadius = 1;
         this.animationId = null;
@@ -381,6 +384,7 @@ class MIRVSimulator {
         this.targetAreaSpan = document.getElementById('targetArea');
         this.statusText = document.getElementById('statusText');
         this.launchBtn = document.getElementById('launchBtn');
+        this.stagingBtn = document.getElementById('stagingBtn');
         this.clearBtn = document.getElementById('clearBtn');
 
         this.timescaleSlider.addEventListener('input', (e) => {
@@ -389,6 +393,7 @@ class MIRVSimulator {
         });
 
         this.launchBtn.addEventListener('click', () => this.launchMIRV());
+        this.stagingBtn.addEventListener('click', () => this.stageAnother());
         this.clearBtn.addEventListener('click', () => this.clearAll());
 
         this.updateUI();
@@ -518,14 +523,18 @@ class MIRVSimulator {
         } else if (this.mode === 'ready') {
             this.modeIndicator.textContent = 'Mode: Ready to Launch';
             this.statusText.style.display = 'none';
+        } else if (this.mode === 'launched') {
+            this.modeIndicator.textContent = 'Mode: Mission Active';
         }
 
         // Update location displays
         this.launchLocationSpan.textContent = this.launchLocation ? 'Set' : 'Not set';
         this.targetAreaSpan.textContent = this.targetArea ? 'Set' : 'Not set';
 
-        // Update launch button
+        // Update buttons
         this.launchBtn.disabled = this.mode !== 'ready' || this.animatingMIRV;
+        this.stagingBtn.disabled = this.mode !== 'launched' || this.animatingMIRV;
+        this.stagingBtn.style.display = this.mode === 'launched' ? 'block' : 'none';
     }
 
     updateStatus(message) {
@@ -537,15 +546,51 @@ class MIRVSimulator {
         if (!this.launchLocation || !this.targetArea || this.animatingMIRV) return;
 
         this.animatingMIRV = true;
+        this.missionCount++;
         this.updateUI();
-        this.updateStatus('🚀 Rocket launching...');
+        this.updateStatus(`🚀 Mission #${this.missionCount} launching...`);
+
+        // Store current launch data
+        const currentLaunch = {
+            id: this.missionCount,
+            launchLocation: this.launchLocation.point.clone(),
+            targetArea: this.targetArea.point.clone(),
+            warheadCount: parseInt(this.warheadCountSelect.value),
+            rocket: null,
+            warheads: [],
+            rocketTrail: null
+        };
+        
+        this.launches.push(currentLaunch);
 
         // Phase 1: Create and launch the rocket
-        this.createRocket();
-        this.startRocketLaunch();
+        this.createRocket(currentLaunch);
+        this.startRocketLaunch(currentLaunch);
     }
 
-    createRocket() {
+    stageAnother() {
+        // Reset for staging another MIRV
+        this.mode = 'launch';
+        this.animatingMIRV = false;
+        
+        // Clear current launch/target markers but keep explosions and trajectories
+        if (this.launchLocation && this.launchLocation.marker) {
+            this.scene.remove(this.launchLocation.marker);
+        }
+        if (this.targetArea && this.targetArea.marker) {
+            this.scene.remove(this.targetArea.marker);
+        }
+        
+        this.launchLocation = null;
+        this.targetArea = null;
+        this.rocket = null;
+        this.rocketTrail = null;
+        
+        this.updateUI();
+        this.updateStatus('🎯 Ready to stage next MIRV - set launch location');
+    }
+
+    createRocket(currentLaunch) {
         const rocketGroup = new THREE.Group();
         
         // Main body
@@ -575,16 +620,19 @@ class MIRVSimulator {
         rocketGroup.add(flame);
         
         // Position at launch pad
-        rocketGroup.position.copy(this.launchLocation.point.clone().normalize().multiplyScalar(this.earthRadius * 1.006));
-        rocketGroup.lookAt(this.launchLocation.point.clone().normalize().multiplyScalar(this.earthRadius * 2));
+        rocketGroup.position.copy(currentLaunch.launchLocation.clone().normalize().multiplyScalar(this.earthRadius * 1.006));
+        rocketGroup.lookAt(currentLaunch.launchLocation.clone().normalize().multiplyScalar(this.earthRadius * 2));
         
         this.scene.add(rocketGroup);
-        this.rocket = { group: rocketGroup, flame: flame };
+        const rocket = { group: rocketGroup, flame: flame };
+        
+        currentLaunch.rocket = rocket;
+        this.rocket = rocket; // Keep reference for current launch
     }
 
-    startRocketLaunch() {
-        const launchPoint = this.launchLocation.point.clone();
-        const targetPoint = this.targetArea.point.clone();
+    startRocketLaunch(currentLaunch) {
+        const launchPoint = currentLaunch.launchLocation.clone();
+        const targetPoint = currentLaunch.targetArea.clone();
         
         // Calculate trajectory - high arc for intercontinental ballistic missile
         const distance = launchPoint.distanceTo(targetPoint);
@@ -595,14 +643,16 @@ class MIRVSimulator {
         // Create trajectory curve (quadratic Bezier)
         const trajectory = new THREE.QuadraticBezierCurve3(launchPoint, apogeePoint, targetPoint);
         
-        // Create rocket trail
-        this.rocketTrail = {
+        // Create rocket trail for this launch
+        const rocketTrail = {
             points: [],
             line: null
         };
+        currentLaunch.rocketTrail = rocketTrail;
+        this.rocketTrail = rocketTrail; // Keep reference for current launch
         
         // Show exhaust flame
-        this.rocket.flame.visible = true;
+        currentLaunch.rocket.flame.visible = true;
         
         // Phase 1: Rocket ascent (0-60% of trajectory - goes much further before separation)
         const ascentDuration = 20000 / this.timescale; // 20 seconds real time
@@ -615,77 +665,78 @@ class MIRVSimulator {
             
             if (progress < 1) {
                 const position = trajectory.getPoint(trajectoryProgress);
-                this.rocket.group.position.copy(position);
+                currentLaunch.rocket.group.position.copy(position);
                 
                 // Add point to trail
-                this.rocketTrail.points.push(position.clone());
+                rocketTrail.points.push(position.clone());
                 
                 // Update trail visualization
-                this.updateRocketTrail();
+                this.updateRocketTrail(rocketTrail);
                 
                 // Orient rocket along trajectory
                 const nextPos = trajectory.getPoint(Math.min(trajectoryProgress + 0.01, 1));
-                this.rocket.group.lookAt(nextPos);
+                currentLaunch.rocket.group.lookAt(nextPos);
                 
                 requestAnimationFrame(animateAscent);
             } else {
                 // Phase 2: MIRV separation - rocket breaks apart
-                this.updateStatus('💥 MIRV separation occurring...');
-                setTimeout(() => this.mirvSeparation(trajectory, 0.6), 500 / this.timescale);
+                this.updateStatus(`💥 Mission #${currentLaunch.id} MIRV separation occurring...`);
+                setTimeout(() => this.mirvSeparation(currentLaunch, trajectory, 0.6), 500 / this.timescale);
             }
         };
         
         animateAscent();
     }
 
-    updateRocketTrail() {
+    updateRocketTrail(rocketTrail = this.rocketTrail) {
         // Remove old trail line
-        if (this.rocketTrail.line) {
-            this.scene.remove(this.rocketTrail.line);
+        if (rocketTrail.line) {
+            this.scene.remove(rocketTrail.line);
         }
         
         // Create new trail line
-        if (this.rocketTrail.points.length > 1) {
-            const trailGeometry = new THREE.BufferGeometry().setFromPoints(this.rocketTrail.points);
+        if (rocketTrail.points.length > 1) {
+            const trailGeometry = new THREE.BufferGeometry().setFromPoints(rocketTrail.points);
             const trailMaterial = new THREE.LineBasicMaterial({ 
                 color: 0xffdd44,
                 transparent: true,
                 opacity: 0.8,
                 linewidth: 2
             });
-            this.rocketTrail.line = new THREE.Line(trailGeometry, trailMaterial);
-            this.scene.add(this.rocketTrail.line);
+            rocketTrail.line = new THREE.Line(trailGeometry, trailMaterial);
+            this.scene.add(rocketTrail.line);
         }
     }
 
-    mirvSeparation(mainTrajectory, separationProgress) {
+    mirvSeparation(currentLaunch, mainTrajectory, separationProgress) {
         // Get the actual separation point from the rocket's current position
-        const rocketPosition = this.rocket.group.position.clone();
+        const rocketPosition = currentLaunch.rocket.group.position.clone();
         
         // Create breakup debris from rocket
         this.createRocketBreakup(rocketPosition);
         
         // Remove rocket after brief delay to show breakup
         setTimeout(() => {
-            this.scene.remove(this.rocket.group);
-            this.rocket = null;
+            this.scene.remove(currentLaunch.rocket.group);
+            currentLaunch.rocket = null;
+            this.rocket = null; // Clear current reference
         }, 1000 / this.timescale);
         
         // Generate warhead targets around the target area
-        const warheadCount = parseInt(this.warheadCountSelect.value);
-        const targetCenter = this.targetArea.point.clone();
+        const warheadCount = currentLaunch.warheadCount;
+        const targetCenter = currentLaunch.targetArea.clone();
         const warheadTargets = this.generateWarheadTargets(targetCenter, warheadCount);
         
         // Create individual warheads starting from the actual separation point (rocket position)
-        this.warheads = [];
+        currentLaunch.warheads = [];
         
         warheadTargets.forEach((target, index) => {
             setTimeout(() => {
-                this.createWarhead(rocketPosition, target, index);
+                this.createWarhead(currentLaunch, rocketPosition, target, index);
             }, index * (150 / this.timescale)); // Stagger warhead deployment
         });
         
-        this.updateStatus(`🎯 ${warheadCount} warheads deploying...`);
+        this.updateStatus(`🎯 Mission #${currentLaunch.id}: ${warheadCount} warheads deploying...`);
     }
 
     createRocketBreakup(position) {
@@ -764,7 +815,7 @@ class MIRVSimulator {
         return targets;
     }
 
-    createWarhead(startPoint, targetPoint, index) {
+    createWarhead(currentLaunch, startPoint, targetPoint, index) {
         // Create warhead object
         const warheadGeometry = new THREE.SphereGeometry(0.002, 6, 6);
         const warheadMaterial = new THREE.MeshBasicMaterial({ 
@@ -776,15 +827,15 @@ class MIRVSimulator {
         this.scene.add(warhead);
         
         // Create warhead trajectory (follows original rocket trajectory then disperses)
-        const trajectoryPoints = this.calculateWarheadTrajectory(startPoint, targetPoint);
+        const trajectoryPoints = this.calculateWarheadTrajectory(currentLaunch, startPoint, targetPoint);
         const trajectory = new THREE.CatmullRomCurve3(trajectoryPoints);
         
         // Create continuous trajectory line that connects to rocket trail
         const fullTrajectoryPoints = [];
         
         // Add rocket trail points first (if they exist)
-        if (this.rocketTrail && this.rocketTrail.points.length > 0) {
-            fullTrajectoryPoints.push(...this.rocketTrail.points);
+        if (currentLaunch.rocketTrail && currentLaunch.rocketTrail.points.length > 0) {
+            fullTrajectoryPoints.push(...currentLaunch.rocketTrail.points);
         }
         
         // Add warhead trajectory points
@@ -802,9 +853,9 @@ class MIRVSimulator {
         this.scene.add(trajectoryLine);
         
         // If this is the first warhead, hide the original rocket trail since we're replacing it
-        if (index === 0 && this.rocketTrail && this.rocketTrail.line) {
-            this.scene.remove(this.rocketTrail.line);
-            this.rocketTrail.line = null;
+        if (index === 0 && currentLaunch.rocketTrail && currentLaunch.rocketTrail.line) {
+            this.scene.remove(currentLaunch.rocketTrail.line);
+            currentLaunch.rocketTrail.line = null;
         }
         
         // Animate warhead descent
@@ -825,10 +876,12 @@ class MIRVSimulator {
                 // Note: Keep trajectory line visible until clearAll() is called
                 this.addExplosion(targetPoint);
                 
-                // Check if all warheads have impacted
-                if (this.explosions.length >= parseInt(this.warheadCountSelect.value)) {
+                // Check if all warheads for this launch have impacted
+                const completedWarheads = currentLaunch.warheads.filter(w => !w.mesh.parent).length + 1; // +1 for this one
+                if (completedWarheads >= currentLaunch.warheadCount) {
                     setTimeout(() => {
-                        this.updateStatus('✅ Mission complete');
+                        this.updateStatus(`✅ Mission #${currentLaunch.id} complete`);
+                        this.mode = 'launched'; // Switch to launched mode to show staging button
                         this.animatingMIRV = false;
                         this.updateUI();
                     }, 2000 / this.timescale);
@@ -837,13 +890,15 @@ class MIRVSimulator {
         };
         
         animateDescent();
-        this.warheads.push({ mesh: warhead, trajectory: trajectoryLine });
+        const warheadData = { mesh: warhead, trajectory: trajectoryLine };
+        currentLaunch.warheads.push(warheadData);
+        this.warheads.push(warheadData); // Keep in global array for compatibility
     }
 
-    calculateWarheadTrajectory(start, target) {
+    calculateWarheadTrajectory(currentLaunch, start, target) {
         // Get the original rocket trajectory (launch to target area center)
-        const launchPoint = this.launchLocation.point.clone();
-        const originalTarget = this.targetArea.point.clone();
+        const launchPoint = currentLaunch.launchLocation.clone();
+        const originalTarget = currentLaunch.targetArea.clone();
         
         // Calculate original trajectory parameters (same as rocket)
         const distance = launchPoint.distanceTo(originalTarget);
@@ -997,40 +1052,46 @@ class MIRVSimulator {
         }
         this.explosions = [];
 
-        // Clear rocket
-        if (this.rocket) {
-            this.scene.remove(this.rocket.group);
-            this.rocket = null;
+        // Clear all launches
+        for (const launch of this.launches) {
+            // Clear rocket
+            if (launch.rocket) {
+                this.scene.remove(launch.rocket.group);
+            }
+            
+            // Clear rocket trail
+            if (launch.rocketTrail && launch.rocketTrail.line) {
+                this.scene.remove(launch.rocketTrail.line);
+            }
+            
+            // Clear warheads and their trajectories
+            for (const warhead of launch.warheads) {
+                this.scene.remove(warhead.mesh);
+                this.scene.remove(warhead.trajectory);
+            }
         }
-
-        // Clear rocket trail (only if it hasn't been replaced by warhead trajectories)
-        if (this.rocketTrail && this.rocketTrail.line) {
-            this.scene.remove(this.rocketTrail.line);
-        }
-        this.rocketTrail = null;
-
-        // Clear warheads and their continuous trajectories
-        for (const warhead of this.warheads) {
-            this.scene.remove(warhead.mesh);
-            this.scene.remove(warhead.trajectory);
-        }
+        
+        // Clear global arrays
+        this.launches = [];
         this.warheads = [];
-
-        // Clear launch location
+        this.rocket = null;
+        this.rocketTrail = null;
+        
+        // Clear current launch/target markers
         if (this.launchLocation && this.launchLocation.marker) {
             this.scene.remove(this.launchLocation.marker);
         }
         this.launchLocation = null;
 
-        // Clear target area
         if (this.targetArea && this.targetArea.marker) {
             this.scene.remove(this.targetArea.marker);
         }
         this.targetArea = null;
 
-        // Reset mode
+        // Reset state
         this.mode = 'launch';
         this.animatingMIRV = false;
+        this.missionCount = 0;
         this.updateUI();
     }
 
