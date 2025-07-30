@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MIRV Simulator - Multiple Independent Reentry Vehicle</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            height: 100vh;
+            background: radial-gradient(ellipse at top, #0d0d23, #070712 60%);
+            color: white;
+            overflow: hidden;
+        }
+        .ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 350px;
+            max-width: calc(100vw - 40px);
+            z-index: 5;
+        }
+        .panel {
+            background: rgba(20, 20, 40, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+            backdrop-filter: blur(8px);
+            padding: 16px;
+        }
+        .panel h2 {
+            margin-bottom: 10px;
+            font-weight: 700;
+            font-size: 18px;
+            letter-spacing: 0.3px;
+        }
+        .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+        .row label { min-width: 120px; font-size: 13px; color: #cfd8ff; }
+        .row select, .row input[type="range"] { flex: 1; }
+        .row select {
+            appearance: none;
+            outline: none;
+            background: #141428;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #fff;
+            padding: 8px 10px;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .small { font-size: 12px; color: #9bb0ff; margin-top: 6px; line-height: 1.3; }
+        .divider { height: 1px; background: linear-gradient(to right, transparent, rgba(255,255,255,0.18), transparent); margin: 12px 0; }
+        .counter { margin-top: 8px; font-weight: 600; color: #ffd700; }
+        .legend { display: grid; grid-template-columns: 16px 1fr; gap: 8px 10px; align-items: center; margin-top: 10px; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; }
+        .dot.fireball { background: rgba(255, 160, 0, 0.9); }
+        .dot.rad     { background: rgba(0, 255, 255, 0.9); }
+        .dot.thermal { background: rgba(255, 64, 64, 0.9); }
+        .dot.blastH  { background: rgba(255, 0, 255, 0.7); }
+        .dot.blastM  { background: rgba(255, 255, 0, 0.8); }
+        .dot.blastL  { background: rgba(0, 255, 0, 0.8); }
+        .notice { margin-top: 8px; font-size: 12px; color: #c5d0ff; }
+        .notice strong { color: #ffd700; }
+        canvas { display: block; }
+
+        /* Buttons */
+        .buttons { display: flex; gap: 8px; margin-top: 10px; }
+        button {
+            background: #293067;
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button:hover { filter: brightness(1.08); }
+        button:active { transform: translateY(1px); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        /* Mode indicator */
+        .mode-indicator {
+            background: rgba(255, 215, 0, 0.2);
+            border: 1px solid #ffd700;
+            border-radius: 6px;
+            padding: 6px 10px;
+            margin-bottom: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #ffd700;
+        }
+        
+        /* Target list */
+        .target-list {
+            max-height: 120px;
+            overflow-y: auto;
+            background: rgba(10, 10, 20, 0.6);
+            border-radius: 6px;
+            padding: 8px;
+        }
+        .target-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 6px;
+            margin-bottom: 4px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .target-item:last-child { margin-bottom: 0; }
+        .target-remove {
+            background: #cc4444;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            padding: 2px 6px;
+            font-size: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="ui">
+        <div class="panel">
+            <h2>MIRV Simulator</h2>
+            <div class="mode-indicator" id="modeIndicator">
+                Mode: Set Launch Location
+            </div>
+
+            <div class="row">
+                <label for="warheadCount">Warheads</label>
+                <select id="warheadCount">
+                    <option value="3">3 warheads</option>
+                    <option value="4">4 warheads</option>
+                    <option value="6">6 warheads</option>
+                    <option value="8">8 warheads</option>
+                    <option value="10">10 warheads</option>
+                    <option value="12">12 warheads</option>
+                </select>
+            </div>
+
+            <div class="row">
+                <label for="yieldSelect">Warhead Yield</label>
+                <select id="yieldSelect">
+                    <option value="0.015">15 kt (Hiroshima)</option>
+                    <option value="0.021">21 kt (Nagasaki)</option>
+                    <option value="0.1">100 kt</option>
+                    <option value="0.3">300 kt (W-76)</option>
+                    <option value="0.475">475 kt (W-88)</option>
+                    <option value="1">1 Mt</option>
+                </select>
+            </div>
+
+            <div class="row">
+                <label for="typeSelect">Detonation</label>
+                <select id="typeSelect">
+                    <option value="air">Air burst</option>
+                    <option value="surface">Surface burst</option>
+                </select>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="small">
+                <strong>Launch Location:</strong> <span id="launchLocation">Not set</span><br/>
+                <strong>Targets:</strong> <span id="targetCount">0</span>
+            </div>
+
+            <div class="target-list" id="targetList" style="display:none;">
+                <!-- Target items will be added here dynamically -->
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="legend" aria-label="Legend">
+                <div class="dot fireball"></div><div>Fireball</div>
+                <div class="dot rad"></div><div>Prompt radiation</div>
+                <div class="dot thermal"></div><div>Thermal pulse</div>
+                <div class="dot blastH"></div><div>Heavy blast</div>
+                <div class="dot blastM"></div><div>Moderate blast</div>
+                <div class="dot blastL"></div><div>Light blast</div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="small">
+                <strong>Click</strong> to set launch/target locations.<br/>
+                Drag to rotate. Scroll to zoom.
+            </div>
+
+            <div class="buttons">
+                <button id="launchBtn" type="button" disabled>🚀 Launch MIRV</button>
+                <button id="clearBtn" type="button">Clear All</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+/* MIRV Simulator - Multiple Independent Reentry Vehicle Simulation */
+class MIRVSimulator {
+    constructor() {
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.controls = null;
+        this.earth = null;
+        this.clouds = null;
+        
+        // MIRV-specific properties
+        this.mode = 'launch'; // 'launch', 'target', 'ready'
+        this.launchLocation = null;
+        this.targets = [];
+        this.explosions = [];
+        this.trajectories = [];
+        this.animatingMIRV = false;
+        
+        this.earthRadius = 1;
+        this.animationId = null;
+        this.raycaster = null;
+        this.mouse = null;
+
+        this.init();
+    }
+
+    init() {
+        // Scene
+        this.scene = new THREE.Scene();
+        this.scene.fog = new THREE.FogExp2(0x00030a, 0.06);
+
+        // Camera
+        this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
+        this.camera.position.set(0, 0.8, 2.6);
+
+        // Renderer
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        this.renderer.shadowMap.enabled = true;
+        document.body.appendChild(this.renderer.domElement);
+
+        // Controls
+        this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        this.controls.enablePan = false;
+        this.controls.minDistance = 1.5;
+        this.controls.maxDistance = 8;
+        this.controls.autoRotate = false;
+
+        // Raycaster + mouse
+        this.raycaster = new THREE.Raycaster();
+        this.mouse = new THREE.Vector2();
+
+        // Lights
+        this.setupLights();
+
+        // Globe
+        this.setupEarth();
+        this.setupAtmosphere();
+        this.setupStars();
+
+        // UI bindings
+        this.bindUI();
+
+        // Events
+        window.addEventListener('resize', () => this.onResize());
+        this.renderer.domElement.addEventListener('click', (event) => {
+            this.onGlobeClick(event);
+        });
+
+        // Start
+        this.animate();
+    }
+
+    setupLights() {
+        const ambient = new THREE.AmbientLight(0x404070, 0.8);
+        this.scene.add(ambient);
+
+        const sunLight = new THREE.DirectionalLight(0xfff6e5, 1.2);
+        sunLight.position.set(3, 2, 1.5);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        this.scene.add(sunLight);
+
+        const fillLight = new THREE.DirectionalLight(0x8888ff, 0.3);
+        fillLight.position.set(-3, -1, -2);
+        this.scene.add(fillLight);
+    }
+
+    setupEarth() {
+        const loader = new THREE.TextureLoader();
+
+        const earthTexture = loader.load('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/earth_atmos_2048.jpg');
+        const normalTexture = loader.load('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/earth_normal_2048.jpg');
+        const specTexture   = loader.load('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/earth_specular_2048.jpg');
+
+        const geometry = new THREE.SphereGeometry(this.earthRadius, 96, 96);
+        const material = new THREE.MeshPhongMaterial({
+            map: earthTexture,
+            normalMap: normalTexture,
+            specularMap: specTexture,
+            specular: new THREE.Color(0x222222),
+            shininess: 8
+        });
+
+        this.earth = new THREE.Mesh(geometry, material);
+        this.earth.receiveShadow = true;
+        this.earth.castShadow = true;
+        this.scene.add(this.earth);
+    }
+
+    setupAtmosphere() {
+        const cloudsTexture = new THREE.TextureLoader().load('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/earth_clouds_1024.png');
+        const cloudsGeo = new THREE.SphereGeometry(this.earthRadius * 1.01, 96, 96);
+        const cloudsMat = new THREE.MeshLambertMaterial({ map: cloudsTexture, transparent: true, opacity: 0.35 });
+        this.clouds = new THREE.Mesh(cloudsGeo, cloudsMat);
+        this.scene.add(this.clouds);
+    }
+
+    setupStars() {
+        const starGeo = new THREE.SphereGeometry(80, 32, 32);
+        const starMat = new THREE.MeshBasicMaterial({
+            map: new THREE.TextureLoader().load('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/galaxy_starfield.png'),
+            side: THREE.BackSide,
+            depthWrite: false,
+            opacity: 0.8,
+            transparent: true
+        });
+        const stars = new THREE.Mesh(starGeo, starMat);
+        this.scene.add(stars);
+    }
+
+    bindUI() {
+        this.warheadCountSelect = document.getElementById('warheadCount');
+        this.yieldSelect = document.getElementById('yieldSelect');
+        this.typeSelect = document.getElementById('typeSelect');
+        this.modeIndicator = document.getElementById('modeIndicator');
+        this.launchLocationSpan = document.getElementById('launchLocation');
+        this.targetCountSpan = document.getElementById('targetCount');
+        this.targetList = document.getElementById('targetList');
+        this.launchBtn = document.getElementById('launchBtn');
+        this.clearBtn = document.getElementById('clearBtn');
+
+        this.launchBtn.addEventListener('click', () => this.launchMIRV());
+        this.clearBtn.addEventListener('click', () => this.clearAll());
+
+        this.updateUI();
+    }
+
+    onResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // Convert a mouse or pointer event into normalized device coordinates
+    getPointerNDC(event) {
+        const canvas = this.renderer.domElement;
+        let x, y;
+        if (typeof event.offsetX === 'number' && typeof event.offsetY === 'number') {
+            x = (event.offsetX / canvas.clientWidth) * 2 - 1;
+            y = -(event.offsetY / canvas.clientHeight) * 2 + 1;
+        } else {
+            const rect = canvas.getBoundingClientRect();
+            x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        }
+        this.mouse.set(x, y);
+    }
+
+    onGlobeClick(event) {
+        if (this.animatingMIRV) return;
+        
+        this.getPointerNDC(event);
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+        const intersects = this.raycaster.intersectObject(this.earth);
+        
+        if (intersects.length > 0) {
+            const point = intersects[0].point.clone().normalize().multiplyScalar(this.earthRadius);
+            
+            if (this.mode === 'launch') {
+                this.setLaunchLocation(point);
+            } else if (this.mode === 'target') {
+                this.addTarget(point);
+            }
+        }
+    }
+
+    setLaunchLocation(point) {
+        // Remove existing launch marker
+        if (this.launchLocation && this.launchLocation.marker) {
+            this.scene.remove(this.launchLocation.marker);
+        }
+
+        // Create launch marker
+        const marker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.012, 12, 12),
+            new THREE.MeshBasicMaterial({ 
+                color: 0x00ff00,
+                emissive: 0x004400,
+                transparent: true,
+                opacity: 0.9
+            })
+        );
+        marker.position.copy(point.clone().normalize().multiplyScalar(this.earthRadius * 1.004));
+        this.scene.add(marker);
+
+        this.launchLocation = { point: point.clone(), marker };
+        this.mode = 'target';
+        this.updateUI();
+    }
+
+    addTarget(point) {
+        const warheadCount = parseInt(this.warheadCountSelect.value);
+        if (this.targets.length >= warheadCount) {
+            return; // Don't exceed warhead count
+        }
+
+        // Create target marker
+        const marker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.008, 10, 10),
+            new THREE.MeshBasicMaterial({ 
+                color: 0xff0000,
+                emissive: 0x440000,
+                transparent: true,
+                opacity: 0.9
+            })
+        );
+        marker.position.copy(point.clone().normalize().multiplyScalar(this.earthRadius * 1.002));
+        this.scene.add(marker);
+
+        const target = { 
+            point: point.clone(), 
+            marker,
+            id: this.targets.length
+        };
+        this.targets.push(target);
+
+        if (this.targets.length === warheadCount) {
+            this.mode = 'ready';
+        }
+
+        this.updateUI();
+    }
+
+    removeTarget(targetId) {
+        const target = this.targets[targetId];
+        if (target) {
+            this.scene.remove(target.marker);
+            this.targets.splice(targetId, 1);
+            
+            // Update IDs
+            this.targets.forEach((t, i) => t.id = i);
+            
+            if (this.targets.length < parseInt(this.warheadCountSelect.value)) {
+                this.mode = 'target';
+            }
+            this.updateUI();
+        }
+    }
+
+    updateUI() {
+        const warheadCount = parseInt(this.warheadCountSelect.value);
+        
+        // Update mode indicator
+        if (this.mode === 'launch') {
+            this.modeIndicator.textContent = 'Mode: Set Launch Location';
+        } else if (this.mode === 'target') {
+            this.modeIndicator.textContent = `Mode: Set Targets (${this.targets.length}/${warheadCount})`;
+        } else if (this.mode === 'ready') {
+            this.modeIndicator.textContent = 'Mode: Ready to Launch';
+        }
+
+        // Update launch location
+        this.launchLocationSpan.textContent = this.launchLocation ? 'Set' : 'Not set';
+
+        // Update target count
+        this.targetCountSpan.textContent = `${this.targets.length}/${warheadCount}`;
+
+        // Update target list
+        if (this.targets.length > 0) {
+            this.targetList.style.display = 'block';
+            this.targetList.innerHTML = this.targets.map(target => `
+                <div class="target-item">
+                    <span>Target ${target.id + 1}</span>
+                    <button class="target-remove" onclick="simulator.removeTarget(${target.id})">Remove</button>
+                </div>
+            `).join('');
+        } else {
+            this.targetList.style.display = 'none';
+        }
+
+        // Update launch button
+        this.launchBtn.disabled = this.mode !== 'ready' || this.animatingMIRV;
+    }
+
+    launchMIRV() {
+        if (!this.launchLocation || this.targets.length === 0 || this.animatingMIRV) return;
+
+        this.animatingMIRV = true;
+        this.updateUI();
+
+        // Create trajectories for each warhead
+        this.targets.forEach((target, index) => {
+            setTimeout(() => {
+                this.createTrajectory(this.launchLocation.point, target.point, index);
+            }, index * 200); // Stagger warhead releases
+        });
+    }
+
+    createTrajectory(launchPoint, targetPoint, warheadIndex) {
+        // Calculate trajectory arc
+        const distance = launchPoint.distanceTo(targetPoint);
+        const midPoint = launchPoint.clone().add(targetPoint).multiplyScalar(0.5);
+        const height = Math.max(0.3, distance * 0.5); // Arc height based on distance
+        
+        // Create control point for arc
+        const controlPoint = midPoint.clone().normalize().multiplyScalar(this.earthRadius + height);
+        
+        // Create trajectory curve
+        const curve = new THREE.QuadraticBezierCurve3(launchPoint, controlPoint, targetPoint);
+        const points = curve.getPoints(50);
+        
+        // Create trajectory line
+        const trajectoryGeometry = new THREE.BufferGeometry().setFromPoints(points);
+        const trajectoryMaterial = new THREE.LineBasicMaterial({ 
+            color: 0xffaa00,
+            transparent: true,
+            opacity: 0.7
+        });
+        const trajectoryLine = new THREE.Line(trajectoryGeometry, trajectoryMaterial);
+        this.scene.add(trajectoryLine);
+
+        // Create warhead object
+        const warheadGeometry = new THREE.SphereGeometry(0.004, 8, 8);
+        const warheadMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xffffff,
+            emissive: 0xffaa00
+        });
+        const warhead = new THREE.Mesh(warheadGeometry, warheadMaterial);
+        this.scene.add(warhead);
+
+        // Animate warhead along trajectory
+        let progress = 0;
+        const duration = 3000 + (warheadIndex * 100); // Slightly different times
+        const startTime = Date.now();
+
+        const animateWarhead = () => {
+            const elapsed = Date.now() - startTime;
+            progress = Math.min(elapsed / duration, 1);
+
+            if (progress < 1) {
+                const position = curve.getPoint(progress);
+                warhead.position.copy(position);
+                requestAnimationFrame(animateWarhead);
+            } else {
+                // Impact!
+                this.scene.remove(warhead);
+                this.scene.remove(trajectoryLine);
+                this.addExplosion(targetPoint);
+                
+                // Check if all warheads have impacted
+                this.checkMIRVComplete();
+            }
+        };
+
+        animateWarhead();
+    }
+
+    checkMIRVComplete() {
+        // Simple check - if we have explosions equal to target count, MIRV is complete
+        if (this.explosions.length >= this.targets.length) {
+            setTimeout(() => {
+                this.animatingMIRV = false;
+                this.updateUI();
+            }, 1000);
+        }
+    }
+
+    calculateBlastRadii(yieldMt, detonationType) {
+        const isAirBurst = detonationType === 'air';
+        const scaleFactor = isAirBurst ? 1.0 : 0.8;
+        const yieldKt = yieldMt * 1000;
+
+        // Visualization scaling (km)
+        const fireballKm      = Math.pow(yieldKt, 0.40) * 0.05 * scaleFactor;
+        const radiationKm     = Math.pow(yieldKt, 0.50) * 0.15 * scaleFactor;
+        const thermalKm       = Math.pow(yieldKt, 0.40) * 0.35 * scaleFactor;
+        const blastHeavyKm    = Math.pow(yieldKt, 0.33) * 0.20 * scaleFactor;
+        const blastModerateKm = Math.pow(yieldKt, 0.33) * 0.50 * scaleFactor;
+        const blastLightKm    = Math.pow(yieldKt, 0.33) * 1.20 * scaleFactor;
+
+        const earthRadiusKm = 6371;
+        const kmToGlobe = this.earthRadius / earthRadiusKm;
+
+        return {
+            fireball:      fireballKm      * kmToGlobe,
+            radiation:     radiationKm     * kmToGlobe,
+            thermal:       thermalKm       * kmToGlobe,
+            blastHeavy:    blastHeavyKm    * kmToGlobe,
+            blastModerate: blastModerateKm * kmToGlobe,
+            blastLight:    blastLightKm    * kmToGlobe
+        };
+    }
+
+    addExplosion(surfacePoint) {
+        const yieldMt = parseFloat(this.yieldSelect.value);
+        const detonationType = this.typeSelect.value;
+        const radii = this.calculateBlastRadii(yieldMt, detonationType);
+
+        const group = new THREE.Group();
+        group.position.copy(surfacePoint.clone().normalize().multiplyScalar(this.earthRadius));
+
+        const up = surfacePoint.clone().normalize();
+        const zAxis = new THREE.Vector3(0, 0, 1);
+        const quat = new THREE.Quaternion().setFromUnitVectors(zAxis, up);
+        group.quaternion.copy(quat);
+
+        const mkRing = (innerR, outerR, color, opacity = 0.6) => {
+            const geom = new THREE.RingGeometry(innerR, outerR, 128, 1);
+            const mat = new THREE.MeshBasicMaterial({
+                color,
+                transparent: true,
+                opacity,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            const mesh = new THREE.Mesh(geom, mat);
+            mesh.rotateX(Math.PI / 2);
+            return mesh;
+        };
+
+        const rings = [
+            mkRing(0.0,              radii.fireball,      0xffa000, 0.85),
+            mkRing(radii.fireball,   radii.radiation,     0x00ffff, 0.50),
+            mkRing(radii.radiation,  radii.thermal,       0xff4040, 0.35),
+            mkRing(radii.thermal,    radii.blastHeavy,    0xff00ff, 0.35),
+            mkRing(radii.blastHeavy, radii.blastModerate, 0xffff00, 0.30),
+            mkRing(radii.blastModerate, radii.blastLight, 0x00ff00, 0.25)
+        ];
+        rings.forEach(r => group.add(r));
+
+        this.scene.add(group);
+        this.explosions.push(group);
+    }
+
+    clearAll() {
+        // Clear explosions
+        for (const group of this.explosions) {
+            this.scene.remove(group);
+            group.traverse(obj => {
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) {
+                    if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                    else obj.material.dispose();
+                }
+            });
+        }
+        this.explosions = [];
+
+        // Clear launch location
+        if (this.launchLocation && this.launchLocation.marker) {
+            this.scene.remove(this.launchLocation.marker);
+        }
+        this.launchLocation = null;
+
+        // Clear targets
+        for (const target of this.targets) {
+            this.scene.remove(target.marker);
+        }
+        this.targets = [];
+
+        // Reset mode
+        this.mode = 'launch';
+        this.animatingMIRV = false;
+        this.updateUI();
+    }
+
+    animate() {
+        this.animationId = requestAnimationFrame(() => this.animate());
+        if (this.clouds) this.clouds.rotation.y += 0.0004;
+        this.controls.update();
+        this.renderer.render(this.scene, this.camera);
+    }
+}
+
+// Global variable to allow UI callbacks
+let simulator;
+window.addEventListener('DOMContentLoaded', () => {
+    simulator = new MIRVSimulator();
+});
+    </script>
+</body>
+</html>
