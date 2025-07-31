@@ -179,6 +179,11 @@
                 </select>
             </div>
 
+            <div class="row">
+                <label for="starsToggle">Show Stars</label>
+                <input type="checkbox" id="starsToggle" checked>
+            </div>
+
             <div class="divider"></div>
 
             <div class="small">
@@ -228,6 +233,10 @@ class MIRVSimulator {
         this.controls = null;
         this.earth = null;
         this.clouds = null;
+
+        // Stars
+        this.stars = null;
+        this.starsEnabled = true;
         
         // MIRV-specific properties
         this.mode = 'launch'; // 'launch', 'target', 'ready'
@@ -362,16 +371,64 @@ class MIRVSimulator {
     }
 
     setupStars() {
-        const starGeo = new THREE.SphereGeometry(80, 32, 32);
-        const starMat = new THREE.MeshBasicMaterial({
-            map: new THREE.TextureLoader().load('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/galaxy_starfield.png'),
-            side: THREE.BackSide,
-            depthWrite: false,
-            opacity: 0.8,
-            transparent: true
+        // Create procedural star field using points
+        const starsGeometry = new THREE.BufferGeometry();
+        const starCount = 2000;
+        const positions = new Float32Array(starCount * 3);
+        const colors = new Float32Array(starCount * 3);
+        
+        for (let i = 0; i < starCount; i++) {
+            // Generate random points on a sphere
+            const radius = 50;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            
+            const x = radius * Math.sin(phi) * Math.cos(theta);
+            const y = radius * Math.sin(phi) * Math.sin(theta);
+            const z = radius * Math.cos(phi);
+            
+            positions[i * 3] = x;
+            positions[i * 3 + 1] = y;
+            positions[i * 3 + 2] = z;
+            
+            // Vary star colors (white to slight blue/yellow tint)
+            const brightness = 0.5 + Math.random() * 0.5;
+            const colorVariation = Math.random();
+            
+            if (colorVariation < 0.7) {
+                // White stars
+                colors[i * 3] = brightness;
+                colors[i * 3 + 1] = brightness;
+                colors[i * 3 + 2] = brightness;
+            } else if (colorVariation < 0.85) {
+                // Slightly blue stars
+                colors[i * 3] = brightness * 0.8;
+                colors[i * 3 + 1] = brightness * 0.9;
+                colors[i * 3 + 2] = brightness;
+            } else {
+                // Slightly yellow stars
+                colors[i * 3] = brightness;
+                colors[i * 3 + 1] = brightness * 0.95;
+                colors[i * 3 + 2] = brightness * 0.7;
+            }
+        }
+        
+        starsGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        starsGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        const starsMaterial = new THREE.PointsMaterial({
+            size: 8,
+            vertexColors: true,
+            transparent: true,
+            opacity: 1.0,
+            sizeAttenuation: false,
+            fog: false  // Disable fog for stars
         });
-        const stars = new THREE.Mesh(starGeo, starMat);
-        this.scene.add(stars);
+        
+        this.stars = new THREE.Points(starsGeometry, starsMaterial);
+        this.stars.visible = this.starsEnabled;
+        this.stars.renderOrder = -1; // Render behind everything
+        this.scene.add(this.stars);
     }
 
     bindUI() {
@@ -388,6 +445,8 @@ class MIRVSimulator {
         this.stagingBtn = document.getElementById('stagingBtn');
         this.clearBtn = document.getElementById('clearBtn');
 
+        this.starsToggle = document.getElementById('starsToggle');
+
         this.timescaleSlider.addEventListener('input', (e) => {
             this.timescale = parseFloat(e.target.value);
             this.timescaleValue.textContent = this.timescale + 'x';
@@ -396,6 +455,11 @@ class MIRVSimulator {
         this.launchBtn.addEventListener('click', () => this.launchMIRV());
         this.stagingBtn.addEventListener('click', () => this.stageAnother());
         this.clearBtn.addEventListener('click', () => this.clearAll());
+
+        this.starsToggle.addEventListener('change', (e) => {
+            this.starsEnabled = e.target.checked;
+            if (this.stars) this.stars.visible = this.starsEnabled;
+        });
 
         this.updateUI();
     }
