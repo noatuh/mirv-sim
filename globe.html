@@ -245,6 +245,7 @@ class MIRVSimulator {
         this.rocketTrail = null;
         this.launches = []; // Track all launches
         this.missionCount = 0; // Counter for mission numbering
+        this.impactMarkers = []; // Track all impact markers
         
         this.earthRadius = 1;
         this.animationId = null;
@@ -875,6 +876,7 @@ class MIRVSimulator {
                 this.scene.remove(warhead);
                 // Note: Keep trajectory line visible until clearAll() is called
                 this.addExplosion(targetPoint);
+                this.addImpactMarker(targetPoint, currentLaunch); // Add persistent impact marker
                 
                 // Check if all warheads for this launch have impacted
                 const completedWarheads = currentLaunch.warheads.filter(w => !w.mesh.parent).length + 1; // +1 for this one
@@ -1038,6 +1040,86 @@ class MIRVSimulator {
         this.explosions.push(group);
     }
 
+    addImpactMarker(surfacePoint, currentLaunch) {
+        // Get yield and detonation type from the launch (use current values since we don't store them per launch)
+        const yieldMt = parseFloat(this.yieldSelect.value);
+        const detonationType = this.typeSelect.value;
+        
+        // Calculate marker size based on yield and detonation type
+        const isAirBurst = detonationType === 'air';
+        const yieldKt = yieldMt * 1000;
+        
+        // Base size calculation - similar to blast radius but smaller for marker
+        let baseSize = Math.pow(yieldKt, 0.33) * 0.003; // Base scaling
+        if (isAirBurst) {
+            baseSize *= 1.2; // Air bursts have slightly larger effective area
+        } else {
+            baseSize *= 1.0; // Surface bursts are more localized
+        }
+        
+        // Clamp size to reasonable limits
+        const markerSize = Math.max(0.002, Math.min(baseSize, 0.015));
+        
+        // Create impact marker group
+        const markerGroup = new THREE.Group();
+        
+        // Create crater/blast mark - darker center circle
+        const craterGeometry = new THREE.CircleGeometry(markerSize, 16);
+        const craterMaterial = new THREE.MeshBasicMaterial({
+            color: isAirBurst ? 0x2a1a0a : 0x1a1a1a, // Darker for surface burst
+            transparent: true,
+            opacity: 0.8,
+            side: THREE.DoubleSide
+        });
+        const crater = new THREE.Mesh(craterGeometry, craterMaterial);
+        crater.rotateX(-Math.PI / 2);
+        markerGroup.add(crater);
+        
+        // Create scorched earth ring around crater
+        const scorchedGeometry = new THREE.RingGeometry(markerSize, markerSize * 1.6, 16);
+        const scorchedMaterial = new THREE.MeshBasicMaterial({
+            color: isAirBurst ? 0x3a2a1a : 0x2a2a2a,
+            transparent: true,
+            opacity: 0.6,
+            side: THREE.DoubleSide
+        });
+        const scorched = new THREE.Mesh(scorchedGeometry, scorchedMaterial);
+        scorched.rotateX(-Math.PI / 2);
+        markerGroup.add(scorched);
+        
+        // Add a subtle glow effect for air bursts
+        if (isAirBurst) {
+            const glowGeometry = new THREE.RingGeometry(markerSize * 1.6, markerSize * 2.2, 16);
+            const glowMaterial = new THREE.MeshBasicMaterial({
+                color: 0x4a3a2a,
+                transparent: true,
+                opacity: 0.3,
+                side: THREE.DoubleSide
+            });
+            const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+            glow.rotateX(-Math.PI / 2);
+            markerGroup.add(glow);
+        }
+        
+        // Position marker on surface
+        markerGroup.position.copy(surfacePoint.clone().normalize().multiplyScalar(this.earthRadius * 1.001));
+        
+        // Orient marker to surface
+        const up = surfacePoint.clone().normalize();
+        const zAxis = new THREE.Vector3(0, 0, 1);
+        const quat = new THREE.Quaternion().setFromUnitVectors(zAxis, up);
+        markerGroup.quaternion.copy(quat);
+        
+        this.scene.add(markerGroup);
+        this.impactMarkers.push({
+            marker: markerGroup,
+            missionId: currentLaunch.id,
+            yield: yieldMt,
+            detonationType: detonationType,
+            position: surfacePoint.clone()
+        });
+    }
+
     clearAll() {
         // Clear explosions
         for (const group of this.explosions) {
@@ -1051,6 +1133,19 @@ class MIRVSimulator {
             });
         }
         this.explosions = [];
+
+        // Clear impact markers
+        for (const markerData of this.impactMarkers) {
+            this.scene.remove(markerData.marker);
+            markerData.marker.traverse(obj => {
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) {
+                    if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                    else obj.material.dispose();
+                }
+            });
+        }
+        this.impactMarkers = [];
 
         // Clear all launches
         for (const launch of this.launches) {
