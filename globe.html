@@ -21,11 +21,20 @@
             max-width: calc(100vw - 40px);
             z-index: 5;
         }
+        .ui-right {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 350px;
+            max-width: calc(100vw - 40px);
+            z-index: 5;
+        }
         .panel {
             background: rgba(20, 20, 40, 0.9);
             border: 1px solid rgba(255, 255, 255, 0.12);
             border-radius: 12px;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+            -webkit-backdrop-filter: blur(8px);
             backdrop-filter: blur(8px);
             padding: 16px;
         }
@@ -47,6 +56,15 @@
             padding: 8px 10px;
             border-radius: 8px;
             font-size: 14px;
+        }
+        .row input[type="number"] {
+            background: #141428;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #fff;
+            padding: 8px 10px;
+            border-radius: 8px;
+            font-size: 14px;
+            width: 100px;
         }
         .row input[type="range"] {
             background: #141428;
@@ -74,7 +92,14 @@
         .dot.blastL  { background: rgba(0, 255, 0, 0.8); }
         .notice { margin-top: 8px; font-size: 12px; color: #c5d0ff; }
         .notice strong { color: #ffd700; }
+    .legend .rowline { display: flex; align-items: center; justify-content: space-between; }
+    .legend label { display: inline-flex; align-items: center; gap: 8px; }
+    .legend .radius { color: #cfd8ff; font-size: 11px; opacity: 0.9; }
         canvas { display: block; }
+    /* Status text hidden by default */
+    #statusText { display: none; }
+    /* Impacts header */
+    .impacts-title { font-size: 14px; margin: 6px 0; }
 
         /* Buttons */
         .buttons { display: flex; gap: 8px; margin-top: 10px; }
@@ -180,6 +205,12 @@
             </div>
 
             <div class="row">
+                <label for="spreadSlider">Target Spread</label>
+                <input type="range" id="spreadSlider" min="0" max="500" step="10" />
+                <span id="spreadValue"></span>
+            </div>
+
+            <div class="row">
                 <label for="starsToggle">Show Stars</label>
                 <input type="checkbox" id="starsToggle" checked>
             </div>
@@ -191,19 +222,43 @@
                 <strong>Target Area:</strong> <span id="targetArea">Not set</span>
             </div>
 
-            <div class="small" id="statusText" style="display:none;">
+            <div class="small" id="statusText">
                 <!-- Dynamic status updates will appear here -->
             </div>
 
             <div class="divider"></div>
 
             <div class="legend" aria-label="Legend">
-                <div class="dot fireball"></div><div>Fireball</div>
-                <div class="dot rad"></div><div>Prompt radiation</div>
-                <div class="dot thermal"></div><div>Thermal pulse</div>
-                <div class="dot blastH"></div><div>Heavy blast</div>
-                <div class="dot blastM"></div><div>Moderate blast</div>
-                <div class="dot blastL"></div><div>Light blast</div>
+                <div class="dot fireball"></div>
+                <div class="rowline">
+                    <label><input type="checkbox" id="fxFireball" checked> Fireball</label>
+                    <span id="rFireball" class="radius"></span>
+                </div>
+                <div class="dot rad"></div>
+                <div class="rowline">
+                    <label><input type="checkbox" id="fxRadiation" checked> Prompt radiation</label>
+                    <span id="rRadiation" class="radius"></span>
+                </div>
+                <div class="dot thermal"></div>
+                <div class="rowline">
+                    <label><input type="checkbox" id="fxThermal" checked> Thermal pulse</label>
+                    <span id="rThermal" class="radius"></span>
+                </div>
+                <div class="dot blastH"></div>
+                <div class="rowline">
+                    <label><input type="checkbox" id="fxBlastH" checked> Heavy blast</label>
+                    <span id="rBlastH" class="radius"></span>
+                </div>
+                <div class="dot blastM"></div>
+                <div class="rowline">
+                    <label><input type="checkbox" id="fxBlastM" checked> Moderate blast</label>
+                    <span id="rBlastM" class="radius"></span>
+                </div>
+                <div class="dot blastL"></div>
+                <div class="rowline">
+                    <label><input type="checkbox" id="fxBlastL" checked> Light blast</label>
+                    <span id="rBlastL" class="radius"></span>
+                </div>
             </div>
 
             <div class="divider"></div>
@@ -218,6 +273,35 @@
                 <button id="stagingBtn" type="button" disabled>🎯 Stage Another</button>
                 <button id="clearBtn" type="button">Clear All</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Right-side coordinates & impacts panel -->
+    <div class="ui-right">
+        <div class="panel">
+            <h2>Coordinates & Impacts</h2>
+
+            <div class="row">
+                <label for="launchLat">Launch Lat/Lon</label>
+                <input type="number" id="launchLat" placeholder="lat" step="0.00001" min="-90" max="90" />
+                <input type="number" id="launchLon" placeholder="lon" step="0.00001" min="-180" max="180" />
+            </div>
+            <div class="buttons">
+                <button id="setLaunchLatLonBtn" type="button">Set Launch</button>
+            </div>
+            <div class="small">You can also Shift+Click on the globe to set launch.</div>
+
+            <div class="divider"></div>
+
+            <div class="small">
+                <strong>Launch lat, lon:</strong> <span id="launchLatLonDisplay">--</span><br/>
+                <strong>Target lat, lon:</strong> <span id="targetLatLonDisplay">--</span>
+            </div>
+
+            <div class="divider"></div>
+
+            <h3 class="impacts-title">Impacts (lat, lon)</h3>
+            <div id="impactsList" class="target-list" aria-label="Impacts"></div>
         </div>
     </div>
 
@@ -255,6 +339,16 @@ class MIRVSimulator {
         this.launches = []; // Track all launches
         this.missionCount = 0; // Counter for mission numbering
         this.impactMarkers = []; // Track all impact markers
+    this.impacts = []; // Logged impacts with lat/lon
+    this.spreadKm = 200; // Default target spread in kilometers
+        this.effectsVisible = {
+            fireball: true,
+            radiation: true,
+            thermal: true,
+            blastHeavy: true,
+            blastModerate: true,
+            blastLight: true
+        };
         
         this.earthRadius = 1;
         this.animationId = null;
@@ -447,6 +541,29 @@ class MIRVSimulator {
 
         this.starsToggle = document.getElementById('starsToggle');
 
+    // New: launch lat/lon inputs and impacts list
+    this.launchLatInput = document.getElementById('launchLat');
+    this.launchLonInput = document.getElementById('launchLon');
+    this.setLaunchLatLonBtn = document.getElementById('setLaunchLatLonBtn');
+    this.impactsList = document.getElementById('impactsList');
+    this.launchLatLonDisplay = document.getElementById('launchLatLonDisplay');
+    this.targetLatLonDisplay = document.getElementById('targetLatLonDisplay');
+    this.spreadSlider = document.getElementById('spreadSlider');
+    this.spreadValue = document.getElementById('spreadValue');
+    // Legend controls and radius readouts
+    this.fxFireball = document.getElementById('fxFireball');
+    this.fxRadiation = document.getElementById('fxRadiation');
+    this.fxThermal = document.getElementById('fxThermal');
+    this.fxBlastH = document.getElementById('fxBlastH');
+    this.fxBlastM = document.getElementById('fxBlastM');
+    this.fxBlastL = document.getElementById('fxBlastL');
+    this.rFireball = document.getElementById('rFireball');
+    this.rRadiation = document.getElementById('rRadiation');
+    this.rThermal = document.getElementById('rThermal');
+    this.rBlastH = document.getElementById('rBlastH');
+    this.rBlastM = document.getElementById('rBlastM');
+    this.rBlastL = document.getElementById('rBlastL');
+
         this.timescaleSlider.addEventListener('input', (e) => {
             this.timescale = parseFloat(e.target.value);
             this.timescaleValue.textContent = this.timescale + 'x';
@@ -459,6 +576,79 @@ class MIRVSimulator {
         this.starsToggle.addEventListener('change', (e) => {
             this.starsEnabled = e.target.checked;
             if (this.stars) this.stars.visible = this.starsEnabled;
+        });
+
+        // Initialize and bind spread slider
+        if (this.spreadSlider) {
+            this.spreadSlider.value = String(this.spreadKm);
+            if (this.spreadValue) this.spreadValue.textContent = this.spreadKm + ' km';
+            this.spreadSlider.addEventListener('input', (e) => {
+                const v = parseFloat(e.target.value);
+                // Clamp to [0, 500]
+                this.spreadKm = Math.max(0, Math.min(500, isNaN(v) ? this.spreadKm : v));
+                if (this.spreadValue) this.spreadValue.textContent = this.spreadKm + ' km';
+            });
+        }
+
+        // Bind legend checkboxes -> toggle effect visibility
+        const hook = (el, key) => {
+            if (!el) return;
+            el.addEventListener('change', () => {
+                this.effectsVisible[key] = !!el.checked;
+                this.applyEffectsVisibility();
+            });
+        };
+        hook(this.fxFireball, 'fireball');
+        hook(this.fxRadiation, 'radiation');
+        hook(this.fxThermal, 'thermal');
+        hook(this.fxBlastH, 'blastHeavy');
+        hook(this.fxBlastM, 'blastModerate');
+        hook(this.fxBlastL, 'blastLight');
+
+        // Update radius readouts whenever yield or type changes
+        this.yieldSelect.addEventListener('change', () => this.updateRadiusReadouts());
+        this.typeSelect.addEventListener('change', () => this.updateRadiusReadouts());
+        // Initial fill
+        this.updateRadiusReadouts();
+
+        // Set launch by lat/lon
+        this.setLaunchLatLonBtn.addEventListener('click', () => {
+            const lat = parseFloat(this.launchLatInput.value);
+            const lon = parseFloat(this.launchLonInput.value);
+            if (Number.isNaN(lat) || Number.isNaN(lon)) {
+                this.updateStatus('Enter valid latitude and longitude.');
+                return;
+            }
+            if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+                this.updateStatus('Latitude must be [-90,90], longitude [-180,180].');
+                return;
+            }
+            const point = this.latLonToVector3(lat, lon, this.earthRadius);
+            this.setLaunchLocation(point);
+            this.updateStatus(`Launch set at ${lat.toFixed(5)}, ${lon.toFixed(5)} (deg)`);
+        });
+
+        // Copy impact coordinates
+        this.impactsList.addEventListener('click', (e) => {
+            const btn = e.target.closest('.copy-impact');
+            if (!btn) return;
+            const idx = parseInt(btn.dataset.index, 10);
+            const impact = this.impacts[idx];
+            if (!impact) return;
+            const text = `${impact.lat.toFixed(5)}, ${impact.lon.toFixed(5)}`;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    this.updateStatus(`Copied: ${text}`);
+                });
+            } else {
+                const temp = document.createElement('input');
+                temp.value = text;
+                document.body.appendChild(temp);
+                temp.select();
+                document.execCommand('copy');
+                document.body.removeChild(temp);
+                this.updateStatus(`Copied: ${text}`);
+            }
         });
 
         this.updateUI();
@@ -532,6 +722,11 @@ class MIRVSimulator {
         
         this.scene.add(launchPadGroup);
         this.launchLocation = { point: point.clone(), marker: launchPadGroup };
+        // Update launch lat/lon display
+        const { lat, lon } = this.vector3ToLatLon(point);
+        if (this.launchLatLonDisplay) {
+            this.launchLatLonDisplay.textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+        }
         this.mode = 'target';
         this.updateUI();
     }
@@ -573,6 +768,11 @@ class MIRVSimulator {
         
         this.scene.add(targetGroup);
         this.targetArea = { point: point.clone(), marker: targetGroup };
+        // Update target lat/lon display
+        const { lat, lon } = this.vector3ToLatLon(point);
+        if (this.targetLatLonDisplay) {
+            this.targetLatLonDisplay.textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+        }
         this.mode = 'ready';
         this.updateUI();
     }
@@ -860,23 +1060,30 @@ class MIRVSimulator {
 
     generateWarheadTargets(centerPoint, count) {
         const targets = [];
-        const spreadRadius = 0.03; // Target spread radius
-        
+        const earthRadiusKm = 6371;
+        const kmToGlobe = this.earthRadius / earthRadiusKm;
+        const spread = Math.max(0, Math.min(500, this.spreadKm));
+        const spreadWorld = spread * kmToGlobe; // spread in world units (on the sphere surface)
+
+        // Build a stable tangent frame at the center point
+        const up = centerPoint.clone().normalize();
+        // Choose an arbitrary reference that is not colinear with up
+        const ref = Math.abs(up.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+        const tangent1 = new THREE.Vector3().crossVectors(up, ref).normalize();
+        const tangent2 = new THREE.Vector3().crossVectors(up, tangent1).normalize();
+
         for (let i = 0; i < count; i++) {
-            const angle = (i / count) * Math.PI * 2;
-            const radius = Math.random() * spreadRadius;
-            
-            // Calculate offset on sphere surface
-            const offset = new THREE.Vector3(
-                Math.cos(angle) * radius,
-                0,
-                Math.sin(angle) * radius
-            );
-            
-            const target = centerPoint.clone().add(offset).normalize().multiplyScalar(this.earthRadius);
+            // Random direction in tangent plane and random radius within spread
+            const theta = Math.random() * Math.PI * 2;
+            const r = Math.random() * spreadWorld; // uniform radius (good enough for small areas)
+            const offset = tangent1.clone().multiplyScalar(Math.cos(theta) * r)
+                .add(tangent2.clone().multiplyScalar(Math.sin(theta) * r));
+
+            const displaced = centerPoint.clone().add(offset);
+            const target = displaced.normalize().multiplyScalar(this.earthRadius);
             targets.push(target);
         }
-        
+
         return targets;
     }
 
@@ -941,6 +1148,7 @@ class MIRVSimulator {
                 // Note: Keep trajectory line visible until clearAll() is called
                 this.addExplosion(targetPoint);
                 this.addImpactMarker(targetPoint, currentLaunch); // Add persistent impact marker
+                this.recordImpact(targetPoint, currentLaunch); // Log and show lat/lon
                 
                 // Check if all warheads for this launch have impacted
                 const completedWarheads = currentLaunch.warheads.filter(w => !w.mesh.parent).length + 1; // +1 for this one
@@ -959,6 +1167,50 @@ class MIRVSimulator {
         const warheadData = { mesh: warhead, trajectory: trajectoryLine };
         currentLaunch.warheads.push(warheadData);
         this.warheads.push(warheadData); // Keep in global array for compatibility
+    }
+
+    // Convert a surface point (Vector3) to { lat, lon } in degrees.
+    vector3ToLatLon(vec) {
+        const r = vec.length();
+        const latRad = Math.asin(vec.y / r);
+        const lonRad = Math.atan2(vec.z, vec.x);
+        return {
+            lat: THREE.MathUtils.radToDeg(latRad),
+            lon: THREE.MathUtils.radToDeg(lonRad)
+        };
+    }
+
+    // Convert latitude/longitude in degrees to a position Vector3 on the globe.
+    latLonToVector3(latDeg, lonDeg, radius = this.earthRadius) {
+        const lat = THREE.MathUtils.degToRad(latDeg);
+        const lon = THREE.MathUtils.degToRad(lonDeg);
+        const x = radius * Math.cos(lat) * Math.cos(lon);
+        const y = radius * Math.sin(lat);
+        const z = radius * Math.cos(lat) * Math.sin(lon);
+        return new THREE.Vector3(x, y, z);
+    }
+
+    // Record impact and update UI list
+    recordImpact(surfacePoint, currentLaunch) {
+        const { lat, lon } = this.vector3ToLatLon(surfacePoint.clone().normalize().multiplyScalar(this.earthRadius));
+        const entry = {
+            missionId: currentLaunch.id,
+            lat,
+            lon,
+            timestamp: Date.now()
+        };
+        this.impacts.push(entry);
+        this.appendImpactToList(entry, this.impacts.length - 1);
+        this.updateStatus(`Impact at lat ${lat.toFixed(5)}, lon ${lon.toFixed(5)}`);
+    }
+
+    appendImpactToList(entry, index) {
+        const item = document.createElement('div');
+        item.className = 'target-item';
+        const latStr = entry.lat.toFixed(5);
+        const lonStr = entry.lon.toFixed(5);
+        item.innerHTML = `<span>Mission #${entry.missionId}: ${latStr}, ${lonStr}</span><button class="copy-impact" data-index="${index}">Copy</button>`;
+        this.impactsList.appendChild(item);
     }
 
     calculateWarheadTrajectory(currentLaunch, start, target) {
@@ -1063,6 +1315,32 @@ class MIRVSimulator {
         };
     }
 
+    updateRadiusReadouts() {
+        const yieldMt = parseFloat(this.yieldSelect.value);
+        const detonationType = this.typeSelect.value;
+        const radii = this.calculateBlastRadii(yieldMt, detonationType);
+        const earthRadiusKm = 6371;
+        const globeToKm = earthRadiusKm / this.earthRadius;
+        const km = (r) => (r * globeToKm).toFixed(1) + ' km';
+        if (this.rFireball) this.rFireball.textContent = km(radii.fireball);
+        if (this.rRadiation) this.rRadiation.textContent = km(radii.radiation);
+        if (this.rThermal) this.rThermal.textContent = km(radii.thermal);
+        if (this.rBlastH) this.rBlastH.textContent = km(radii.blastHeavy);
+        if (this.rBlastM) this.rBlastM.textContent = km(radii.blastModerate);
+        if (this.rBlastL) this.rBlastL.textContent = km(radii.blastLight);
+    }
+
+    applyEffectsVisibility() {
+        for (const group of this.explosions) {
+            if (!group || !group.children) continue;
+            group.children.forEach((mesh) => {
+                if (!mesh.userData || !mesh.userData.effectKey) return;
+                const key = mesh.userData.effectKey;
+                if (key in this.effectsVisible) mesh.visible = !!this.effectsVisible[key];
+            });
+        }
+    }
+
     addExplosion(surfacePoint) {
         const yieldMt = parseFloat(this.yieldSelect.value);
         const detonationType = this.typeSelect.value;
@@ -1076,7 +1354,7 @@ class MIRVSimulator {
         const quat = new THREE.Quaternion().setFromUnitVectors(zAxis, up);
         group.quaternion.copy(quat);
 
-        const mkRing = (innerR, outerR, color, opacity = 0.6) => {
+    const mkRing = (innerR, outerR, color, opacity = 0.6, effectKey = '') => {
             const geom = new THREE.RingGeometry(innerR, outerR, 128, 1);
             const mat = new THREE.MeshBasicMaterial({
                 color,
@@ -1086,19 +1364,27 @@ class MIRVSimulator {
                 depthWrite: false
             });
             const mesh = new THREE.Mesh(geom, mat);
-            mesh.rotateX(Math.PI / 2);
+            mesh.userData.effectKey = effectKey;
             return mesh;
         };
 
         const rings = [
-            mkRing(0.0,              radii.fireball,      0xffa000, 0.85),
-            mkRing(radii.fireball,   radii.radiation,     0x00ffff, 0.50),
-            mkRing(radii.radiation,  radii.thermal,       0xff4040, 0.35),
-            mkRing(radii.thermal,    radii.blastHeavy,    0xff00ff, 0.35),
-            mkRing(radii.blastHeavy, radii.blastModerate, 0xffff00, 0.30),
-            mkRing(radii.blastModerate, radii.blastLight, 0x00ff00, 0.25)
+            mkRing(0.0,              radii.fireball,      0xffa000, 0.85, 'fireball'),
+            mkRing(radii.fireball,   radii.radiation,     0x00ffff, 0.50, 'radiation'),
+            mkRing(radii.radiation,  radii.thermal,       0xff4040, 0.35, 'thermal'),
+            mkRing(radii.thermal,    radii.blastHeavy,    0xff00ff, 0.35, 'blastHeavy'),
+            mkRing(radii.blastHeavy, radii.blastModerate, 0xffff00, 0.30, 'blastModerate'),
+            mkRing(radii.blastModerate, radii.blastLight, 0x00ff00, 0.25, 'blastLight')
         ];
         rings.forEach(r => group.add(r));
+
+        // Enforce current effect visibility on new rings
+        group.children.forEach((mesh) => {
+            const key = mesh.userData && mesh.userData.effectKey;
+            if (key && (key in this.effectsVisible)) {
+                mesh.visible = !!this.effectsVisible[key];
+            }
+        });
 
         this.scene.add(group);
         this.explosions.push(group);
@@ -1135,8 +1421,7 @@ class MIRVSimulator {
             opacity: 0.8,
             side: THREE.DoubleSide
         });
-        const crater = new THREE.Mesh(craterGeometry, craterMaterial);
-        crater.rotateX(-Math.PI / 2);
+    const crater = new THREE.Mesh(craterGeometry, craterMaterial);
         markerGroup.add(crater);
         
         // Create scorched earth ring around crater
@@ -1147,8 +1432,7 @@ class MIRVSimulator {
             opacity: 0.6,
             side: THREE.DoubleSide
         });
-        const scorched = new THREE.Mesh(scorchedGeometry, scorchedMaterial);
-        scorched.rotateX(-Math.PI / 2);
+    const scorched = new THREE.Mesh(scorchedGeometry, scorchedMaterial);
         markerGroup.add(scorched);
         
         // Add a subtle glow effect for air bursts
@@ -1161,7 +1445,6 @@ class MIRVSimulator {
                 side: THREE.DoubleSide
             });
             const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-            glow.rotateX(-Math.PI / 2);
             markerGroup.add(glow);
         }
         
@@ -1210,6 +1493,9 @@ class MIRVSimulator {
             });
         }
         this.impactMarkers = [];
+    // Clear impacts list & data
+    this.impacts = [];
+    if (this.impactsList) this.impactsList.innerHTML = '';
 
         // Clear all launches
         for (const launch of this.launches) {
@@ -1245,7 +1531,9 @@ class MIRVSimulator {
         if (this.targetArea && this.targetArea.marker) {
             this.scene.remove(this.targetArea.marker);
         }
-        this.targetArea = null;
+    this.targetArea = null;
+    if (this.launchLatLonDisplay) this.launchLatLonDisplay.textContent = '--';
+    if (this.targetLatLonDisplay) this.targetLatLonDisplay.textContent = '--';
 
         // Reset state
         this.mode = 'launch';
