@@ -315,6 +315,13 @@
 
             <div class="divider"></div>
 
+            <div class="row">
+                <label for="bordersToggle">Show Country Borders</label>
+                <input type="checkbox" id="bordersToggle" />
+            </div>
+
+            <div class="divider"></div>
+
             <div class="small">
                 <strong>Launch lat, lon:</strong> <span id="launchLatLonDisplay">--</span><br/>
                 <strong>Target lat, lon:</strong> <span id="targetLatLonDisplay">--</span>
@@ -331,6 +338,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
     <script>
 /* MIRV Simulator - Realistic Multiple Independent Reentry Vehicle Simulation */
 class MIRVSimulator {
@@ -381,6 +389,8 @@ class MIRVSimulator {
     this.grid = null;
     this.gridEnabled = false;
     this.latLonTooltip = null;
+    this.borders = null;
+    this.bordersEnabled = false;
 
         this.init();
     }
@@ -422,6 +432,7 @@ class MIRVSimulator {
         this.setupAtmosphere();
         this.setupStars();
     this.setupLatLonGrid();
+    this.loadCountryBorders();
 
         // UI bindings
         this.bindUI();
@@ -617,6 +628,58 @@ class MIRVSimulator {
         return hit[0].point.clone().normalize().multiplyScalar(this.earthRadius);
     }
 
+    async loadCountryBorders() {
+        try {
+            // Use world-atlas borders (low-res to keep it light)
+            const url = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+            const res = await fetch(url);
+            if (!res.ok) throw new Error('Failed to fetch borders');
+            const topo = await res.json();
+            const geo = topojson.feature(topo, topo.objects.countries);
+            const meshes = new THREE.Group();
+
+            const material = new THREE.LineBasicMaterial({
+                color: 0x00ff88,
+                transparent: true,
+                opacity: 0.6,
+                depthTest: false,
+                depthWrite: false,
+                fog: false
+            });
+
+            const R = this.earthRadius * 1.0018; // slightly above Earth
+
+            const addLineFromCoords = (coords) => {
+                // coords: array of [lon, lat]
+                const pts = coords.map(([lon, lat]) => this.latLonToVector3(lat, lon, R));
+                const geo = new THREE.BufferGeometry().setFromPoints(pts);
+                const line = new THREE.Line(geo, material);
+                line.renderOrder = 3;
+                meshes.add(line);
+            };
+
+            for (const feature of geo.features) {
+                const geom = feature.geometry;
+                if (!geom) continue;
+                if (geom.type === 'Polygon') {
+                    for (const ring of geom.coordinates) addLineFromCoords(ring);
+                } else if (geom.type === 'MultiPolygon') {
+                    for (const poly of geom.coordinates) {
+                        for (const ring of poly) addLineFromCoords(ring);
+                    }
+                }
+            }
+
+            meshes.visible = this.bordersEnabled;
+            meshes.renderOrder = 3;
+            this.scene.add(meshes);
+            this.borders = meshes;
+        } catch (err) {
+            console.error('Country borders load error:', err);
+            this.updateStatus('Failed to load country borders.');
+        }
+    }
+
     bindUI() {
         this.warheadCountSelect = document.getElementById('warheadCount');
         this.yieldSelect = document.getElementById('yieldSelect');
@@ -657,6 +720,7 @@ class MIRVSimulator {
     this.rBlastL = document.getElementById('rBlastL');
     this.latLonGridToggle = document.getElementById('latLonGridToggle');
     this.latLonTooltip = document.getElementById('latLonTooltip');
+    this.bordersToggle = document.getElementById('bordersToggle');
 
         this.timescaleSlider.addEventListener('input', (e) => {
             this.timescale = parseFloat(e.target.value);
@@ -733,6 +797,16 @@ class MIRVSimulator {
         this.renderer.domElement.addEventListener('mouseleave', () => {
             if (this.latLonTooltip) this.latLonTooltip.style.display = 'none';
         });
+
+        // Borders toggle
+        if (this.bordersToggle) {
+            this.bordersToggle.addEventListener('change', (e) => {
+                this.bordersEnabled = !!e.target.checked;
+                if (this.borders) this.borders.visible = this.bordersEnabled;
+                // If not yet loaded and enabled, load now
+                if (this.bordersEnabled && !this.borders) this.loadCountryBorders();
+            });
+        }
 
         // Set launch by lat/lon
         this.setLaunchLatLonBtn.addEventListener('click', () => {
@@ -1296,7 +1370,8 @@ class MIRVSimulator {
     vector3ToLatLon(vec) {
         const r = vec.length();
         const latRad = Math.asin(vec.y / r);
-        const lonRad = Math.atan2(vec.z, vec.x);
+    // Flip longitude to align with texture orientation (east-west)
+    const lonRad = Math.atan2(-vec.z, vec.x);
         return {
             lat: THREE.MathUtils.radToDeg(latRad),
             lon: THREE.MathUtils.radToDeg(lonRad)
@@ -1309,7 +1384,8 @@ class MIRVSimulator {
         const lon = THREE.MathUtils.degToRad(lonDeg);
         const x = radius * Math.cos(lat) * Math.cos(lon);
         const y = radius * Math.sin(lat);
-        const z = radius * Math.cos(lat) * Math.sin(lon);
+    // Flip longitude direction for correct visual orientation
+    const z = -radius * Math.cos(lat) * Math.sin(lon);
         return new THREE.Vector3(x, y, z);
     }
 
